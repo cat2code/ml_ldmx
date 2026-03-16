@@ -1,6 +1,5 @@
-# mldmx/scripts/root_to_tensor_smoke.py
-
 import argparse
+from pathlib import Path
 import torch
 import torch.nn as nn
 
@@ -17,9 +16,19 @@ def main():
     parser.add_argument("--max-hits", type=int, default=256)
     args = parser.parse_args()
 
-    source = RootSource(path=args.root_file, tree_name="LDMX_Events")
+    root_path = Path(args.root_file).resolve()
+    print(f"Opening ROOT file: {root_path}")
+
+    if not root_path.exists():
+        raise FileNotFoundError(f"ROOT file not found: {root_path}")
+
+    source = RootSource(path=str(root_path), tree_name="LDMX_Events")
     ecal = BRANCHES["ecal"]["simhits_pileup"]
     branch_names = list(ecal.values())
+
+    print("Reading branches:")
+    for b in branch_names:
+        print("  ", b)
 
     arrays = read_branches(
         source,
