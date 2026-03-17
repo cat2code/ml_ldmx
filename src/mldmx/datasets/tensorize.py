@@ -5,6 +5,11 @@ import numpy as np
 import torch
 
 
+'''
+This is not optimized it does not do for loops vectorized operations would be much faster
+'''
+
+
 def ecal_hits_to_padded_tensor(arrays, branches, max_hits=256):
     x = arrays[branches["x"]]
     y = arrays[branches["y"]]

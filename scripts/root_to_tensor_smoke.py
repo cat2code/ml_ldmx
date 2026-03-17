@@ -5,7 +5,12 @@ import torch.nn as nn
 
 from mldmx.io.root_reader import RootSource, read_branches
 from mldmx.io.branches import BRANCHES
-from mldmx.data.tensorize import ecal_hits_to_padded_tensor
+from mldmx.datasets.tensorize import ecal_hits_to_padded_tensor
+
+'''
+This script is a smoke test to verify that we can read ROOT files, convert the data to tensors, and run a simple model on it.
+to run: python3 scripts/root_to_tensor_smoke.py data/overlay_main10_pileup20_00/pileup.root --stop 5
+'''
 
 
 def main():

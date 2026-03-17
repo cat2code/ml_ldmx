@@ -3,6 +3,10 @@
 from dataclasses import dataclass
 import uproot
 
+'''
+This module provides utilities for reading ROOT files using uproot with awkward arrays. 
+It defines a RootSource dataclass to specify the file and tree, and a read_branches function to read specified branches into awkward arrays.
+'''
 
 @dataclass(frozen=True)
 class RootSource:
