@@ -4,17 +4,17 @@ import awkward as ak
 import numpy as np
 import torch
 
+"""
+Utilities for converting jagged ECal hit arrays into padded tensors.
+Current implementation is simple and readable, not yet optimized.
+"""
 
-'''
-This is not optimized it does not do for loops vectorized operations would be much faster
-'''
 
-
-def ecal_hits_to_padded_tensor(arrays, branches, max_hits=256):
-    x = arrays[branches["x"]]
-    y = arrays[branches["y"]]
-    z = arrays[branches["z"]]
-    e = arrays[branches["energy"]]
+def ecal_hits_to_padded_tensor(arrays, vector_branches, max_hits=256):
+    x = arrays[vector_branches["x"]]
+    y = arrays[vector_branches["y"]]
+    z = arrays[vector_branches["z"]]
+    e = arrays[vector_branches["energy"]]
 
     n_events = len(x)
     features = np.zeros((n_events, max_hits, 4), dtype=np.float32)

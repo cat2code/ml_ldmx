@@ -4,13 +4,13 @@ import torch
 import torch.nn as nn
 
 from mldmx.io.root_reader import RootSource, read_branches
-from mldmx.io.branches import BRANCHES
+from mldmx.io.branches import get_vector_branches, get_all_branch_names
 from mldmx.datasets.tensorize import ecal_hits_to_padded_tensor
 
-'''
-This script is a smoke test to verify that we can read ROOT files, convert the data to tensors, and run a simple model on it.
-to run: python3 scripts/root_to_tensor_smoke.py data/overlay_main10_pileup20_00/pileup.root --stop 5
-'''
+"""
+Smoke test:
+python3 scripts/root_to_tensor_smoke.py data/overlay_main10_pileup20_00/pileup.root --stop 5
+"""
 
 
 def main():
@@ -28,8 +28,9 @@ def main():
         raise FileNotFoundError(f"ROOT file not found: {root_path}")
 
     source = RootSource(path=str(root_path), tree_name="LDMX_Events")
-    ecal = BRANCHES["ecal"]["simhits_pileup"]
-    branch_names = list(ecal.values())
+
+    vectors = get_vector_branches("ecal", "simhits_pileup")
+    branch_names = get_all_branch_names("ecal", "simhits_pileup")
 
     print("Reading branches:")
     for b in branch_names:
@@ -42,7 +43,7 @@ def main():
         entry_stop=args.stop,
     )
 
-    X, mask = ecal_hits_to_padded_tensor(arrays, ecal, max_hits=args.max_hits)
+    X, mask = ecal_hits_to_padded_tensor(arrays, vectors, max_hits=args.max_hits)
 
     print("X shape:", X.shape)
     print("mask shape:", mask.shape)
