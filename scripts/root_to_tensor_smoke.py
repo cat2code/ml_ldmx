@@ -3,13 +3,15 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from mldmx.io.root_reader import RootSource, read_branches
-from mldmx.io.branches import get_vector_branches, get_all_branch_names
+from mldmx.io.root_reader import RootSource, read_branches, select_collection
 from mldmx.datasets.tensorize import ecal_hits_to_padded_tensor
 
 """
+First run:
+python3 -m pip install -e .
+
 Smoke test:
-python3 scripts/root_to_tensor_smoke.py data/overlay_main10_pileup20_00/pileup.root --stop 5
+python3 scripts/root_to_tensor_smoke.py data/overlay_main10_pileup20_02/pileup.root --stop 5
 """
 
 
@@ -28,17 +30,13 @@ def main():
         raise FileNotFoundError(f"ROOT file not found: {root_path}")
 
     source = RootSource(path=str(root_path), tree_name="LDMX_Events")
-    
-    try: # Read rechits branches (events.root file)
-        branch_type = "rechits_overlay"
-        vectors = get_vector_branches("ecal", branch_type)
-        branch_names = get_all_branch_names("ecal", branch_type)
+    branch_type, vectors, branch_names = select_collection(
+        source,
+        detector="ecal",
+        collections=["rechits_overlay", "simhits_pileup"],
+    )
 
-    except: # Read simhits branches instead (pileup.root file)
-        print("Reading branch failed, looking for simhits branch instead...")
-        branch_type = "simhits_pileup"
-        vectors = get_vector_branches("ecal", branch_type)
-        branch_names = get_all_branch_names("ecal", branch_type)
+    print(f"Detected branch layout: {branch_type}")
 
     print("Reading branches:")
     for b in branch_names:

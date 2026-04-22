@@ -63,7 +63,7 @@ def small_io_test():
 
     print(len(events))
     print(events[0].keys())
-    print(events[0]["x"].shape)
+    print(len(events[0]["x"]))
     print(events[0]["energy"][:5])
 
 def training_test(): # Test 
