@@ -57,6 +57,81 @@ def tensorize_ecal_truth(event):
     return truth
 
 
+def dominant_origin_class_labels(event, valid_labels=(1, 2, 3), filter_noise=True):
+    """
+    Build per-hit class labels from the dominant deposited-energy contribution.
+
+    The physical labels are origin IDs in valid_labels. Returned class labels are
+    zero-based for PyTorch losses, with label 1 -> class 0, label 2 -> class 1,
+    and label 3 -> class 2 by default.
+    """
+    label_to_class = {label: idx for idx, label in enumerate(valid_labels)}
+    keep_indices = []
+    physical_labels = []
+    class_labels = []
+
+    noise_flags = event.get("noise_flag", [False] * len(event["x"]))
+    hit_ids = event.get("hit_id", list(range(len(event["x"]))))
+
+    for ihit, (edeps, origins, is_noise) in enumerate(
+        zip(event["edep_contribs"], event["origin_id_contribs"], noise_flags)
+    ):
+        if filter_noise and bool(is_noise):
+            continue
+
+        if len(edeps) == 0:
+            raise ValueError(
+                f"Hit {hit_ids[ihit]} has no energy contributions; cannot assign an origin label."
+            )
+        if len(edeps) != len(origins):
+            raise ValueError(
+                f"Hit {hit_ids[ihit]} has {len(edeps)} edep contributions but "
+                f"{len(origins)} origin contributions."
+            )
+
+        dom = int(np.argmax(edeps))
+        physical_label = int(origins[dom])
+        if physical_label not in label_to_class:
+            raise ValueError(
+                f"Hit {hit_ids[ihit]} has dominant origin label {physical_label}, "
+                f"but this prototype only accepts {tuple(valid_labels)}."
+            )
+
+        keep_indices.append(ihit)
+        physical_labels.append(physical_label)
+        class_labels.append(label_to_class[physical_label])
+
+    if not keep_indices:
+        raise ValueError("No ECal hits remain after applying label/noise selection.")
+
+    return {
+        "keep_indices": torch.tensor(keep_indices, dtype=torch.long),
+        "physical_labels": torch.tensor(physical_labels, dtype=torch.long),
+        "class_labels": torch.tensor(class_labels, dtype=torch.long),
+        "label_to_class": label_to_class,
+        "class_to_label": {idx: label for label, idx in label_to_class.items()},
+    }
+
+
+def tensorize_ecal_node_classification(event, valid_labels=(1, 2, 3), filter_noise=True):
+    x, pos = tensorize_ecal_event(event)
+    labels = dominant_origin_class_labels(
+        event,
+        valid_labels=valid_labels,
+        filter_noise=filter_noise,
+    )
+    keep_indices = labels["keep_indices"]
+    return {
+        "x": x[keep_indices],
+        "pos": pos[keep_indices],
+        "y": labels["class_labels"],
+        "physical_y": labels["physical_labels"],
+        "keep_indices": keep_indices,
+        "label_to_class": labels["label_to_class"],
+        "class_to_label": labels["class_to_label"],
+    }
+
+
 def ecal_hits_to_padded_tensor(arrays, vector_branches, max_hits=256):
     x = arrays[vector_branches["x"]]
     y = arrays[vector_branches["y"]]
