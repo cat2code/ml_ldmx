@@ -10,11 +10,6 @@ import argparse
 from collections import Counter
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -24,7 +19,15 @@ from mldmx.datasets.tensorize import (
 )
 from mldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
 from mldmx.models import ECalTpadMLPFLiteTransformer
+from mldmx.train.losses import soft_label_cross_entropy
+from mldmx.train.utils import choose_device
 from mldmx.viz.ecal import plot_ecal_hit_classes_3d
+from mldmx.viz.fractions import (
+    plot_fraction_error_3d,
+    plot_fraction_mae_hist,
+    plot_fraction_purity,
+    plot_fraction_scatter,
+)
 
 
 VALID_LABELS = (1, 2, 3)
@@ -85,20 +88,6 @@ def count_classes(events):
     return dict(sorted(counter.items()))
 
 
-def choose_device(requested_device):
-    if requested_device == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
-    return torch.device(requested_device)
-
-
-def soft_label_cross_entropy(logits, target):
-    return -(target * F.log_softmax(logits, dim=-1)).sum(dim=-1).mean()
-
-
 def parse_args():
     project_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
@@ -153,96 +142,6 @@ def load_tensor_events(args):
         )
 
     return tensor_events
-
-
-def plot_fraction_scatter(fraction_target, fraction_pred, output_path):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    target = np.asarray(fraction_target)
-    pred = np.asarray(fraction_pred)
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4), sharex=True, sharey=True)
-    for idx, (ax, origin) in enumerate(zip(axes, VALID_LABELS)):
-        ax.scatter(target[:, idx], pred[:, idx], s=8, alpha=0.55)
-        ax.plot([0, 1], [0, 1], color="black", linewidth=1)
-        ax.set_title(f"origin {origin}")
-        ax.set_xlabel("true fraction")
-        if idx == 0:
-            ax.set_ylabel("predicted fraction")
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.grid(True, alpha=0.25)
-
-    fig.suptitle("Event 9 ECal origin energy fractions")
-    plt.tight_layout()
-    fig.savefig(output_path, dpi=200)
-    plt.close(fig)
-
-
-def plot_fraction_purity(fraction_target, fraction_pred, output_path):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    target_max = np.asarray(fraction_target).max(axis=1)
-    pred_max = np.asarray(fraction_pred).max(axis=1)
-    bins = np.linspace(0, 1, 31)
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    ax.hist(target_max, bins=bins, alpha=0.55, label="true max fraction")
-    ax.hist(pred_max, bins=bins, alpha=0.55, label="predicted max fraction")
-    ax.set_xlabel("max origin fraction per ECal hit")
-    ax.set_ylabel("hits")
-    ax.set_title("Event 9 fraction purity")
-    ax.legend()
-    ax.grid(True, alpha=0.25)
-    plt.tight_layout()
-    fig.savefig(output_path, dpi=200)
-    plt.close(fig)
-
-
-def plot_fraction_mae_hist(per_hit_mae, output_path):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    ax.hist(np.asarray(per_hit_mae), bins=30, alpha=0.75)
-    ax.set_xlabel("mean absolute fraction error per ECal hit")
-    ax.set_ylabel("hits")
-    ax.set_title("Event 9 fraction MAE")
-    ax.grid(True, alpha=0.25)
-    plt.tight_layout()
-    fig.savefig(output_path, dpi=200)
-    plt.close(fig)
-
-
-def plot_fraction_error_3d(pos, per_hit_mae, output_path):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    pos = np.asarray(pos)
-    per_hit_mae = np.asarray(per_hit_mae)
-    fig = plt.figure(figsize=(9, 7))
-    ax = fig.add_subplot(111, projection="3d")
-    scatter = ax.scatter(
-        pos[:, 0],
-        pos[:, 1],
-        pos[:, 2],
-        c=per_hit_mae,
-        s=10,
-        alpha=0.85,
-        cmap="viridis",
-    )
-    ax.set_title("Event 9 ECal hits, origin-fraction MAE")
-    ax.set_xlabel("X [mm]")
-    ax.set_ylabel("Y [mm]")
-    ax.set_zlabel("Z [mm]")
-    ax.set_xlim(-300, 300)
-    ax.set_ylim(-300, 300)
-    ax.set_zlim(200, 700)
-    fig.colorbar(scatter, ax=ax, shrink=0.65, label="fraction MAE")
-    plt.tight_layout()
-    fig.savefig(output_path, dpi=200)
-    plt.close(fig)
 
 
 def main():
@@ -405,7 +304,12 @@ def main():
         "Event 9 ECal hits, true dominant origin_id",
     )
     plot_fraction_error_3d(pos, per_hit_fraction_mae, frac_error_path)
-    plot_fraction_scatter(fraction_target_cpu, fraction_pred_cpu, frac_scatter_path)
+    plot_fraction_scatter(
+        fraction_target_cpu,
+        fraction_pred_cpu,
+        frac_scatter_path,
+        valid_labels=VALID_LABELS,
+    )
     plot_fraction_purity(fraction_target_cpu, fraction_pred_cpu, frac_purity_path)
     plot_fraction_mae_hist(per_hit_fraction_mae, frac_mae_hist_path)
 
