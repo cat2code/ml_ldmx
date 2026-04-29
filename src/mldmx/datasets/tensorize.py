@@ -127,6 +127,66 @@ def dominant_origin_class_labels(event, valid_labels=(1, 2, 3), filter_noise=Tru
     }
 
 
+def origin_energy_fraction_targets(event, keep_indices, valid_labels=(1, 2, 3)):
+    """
+    Build soft per-hit origin-composition targets from deposited energy fractions.
+
+    The returned tensor has one row per kept ECal hit and one column per origin in
+    valid_labels. Contributions from other origins are included in the deposited
+    energy denominator but ignored in the numerator.
+    """
+    label_to_column = {label: idx for idx, label in enumerate(valid_labels)}
+    for key in ("edep_contribs", "origin_id_contribs"):
+        if key not in event:
+            raise ValueError(
+                f"Event is missing '{key}'; cannot build origin energy-fraction targets."
+            )
+
+    hit_ids = event.get("hit_id", list(range(len(event["edep_contribs"]))))
+
+    if isinstance(keep_indices, torch.Tensor):
+        keep_indices = keep_indices.detach().cpu().tolist()
+    elif isinstance(keep_indices, ak.Array):
+        keep_indices = ak.to_list(keep_indices)
+
+    targets = torch.zeros((len(keep_indices), len(valid_labels)), dtype=torch.float32)
+
+    for row_idx, ihit in enumerate(keep_indices):
+        ihit = int(ihit)
+        if ihit < 0 or ihit >= len(event["edep_contribs"]):
+            raise ValueError(
+                f"keep_indices contains hit index {ihit}, but event has "
+                f"{len(event['edep_contribs'])} contribution rows."
+            )
+        edeps = event["edep_contribs"][ihit]
+        origins = event["origin_id_contribs"][ihit]
+
+        if len(edeps) == 0:
+            raise ValueError(
+                f"Hit {hit_ids[ihit]} has no energy contributions; cannot build "
+                "origin energy-fraction targets."
+            )
+        if len(edeps) != len(origins):
+            raise ValueError(
+                f"Hit {hit_ids[ihit]} has {len(edeps)} edep contributions but "
+                f"{len(origins)} origin contributions."
+            )
+
+        total_edep = float(sum(float(edep) for edep in edeps))
+        if total_edep <= 0.0:
+            raise ValueError(
+                f"Hit {hit_ids[ihit]} has non-positive total deposited energy "
+                f"({total_edep}); cannot normalize origin fractions."
+            )
+
+        for edep, origin in zip(edeps, origins):
+            column = label_to_column.get(int(origin))
+            if column is not None:
+                targets[row_idx, column] += float(edep) / total_edep
+
+    return targets
+
+
 def tensorize_ecal_node_classification(event, valid_labels=(1, 2, 3), filter_noise=True):
     x, pos = tensorize_ecal_event(event)
     labels = dominant_origin_class_labels(
