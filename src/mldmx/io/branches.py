@@ -34,7 +34,16 @@ BRANCHES = {
                 "n_contribs": "EcalSimHitsOverlay_overlay/EcalSimHitsOverlay_overlay.n_contribs_",
             },
         },
-    }
+    },
+    "trigger_pad_tracks": {
+        "overlay": {
+            "scalars": [],
+            "vectors": {
+                "centroid": "TriggerPadTracks_overlay/TriggerPadTracks_overlay.centroid_",
+                "pe": "TriggerPadTracks_overlay/TriggerPadTracks_overlay.pe_",
+            },
+        },
+    },
 }
 
 def get_collection(detector: str, collection: str) -> dict:

@@ -18,6 +18,20 @@ def _as_tensor(values, dtype):
     return torch.as_tensor(values, dtype=dtype)
 
 
+def _as_1d_float_tensor(values):
+    if values is None:
+        return torch.empty((0,), dtype=torch.float32)
+    if isinstance(values, torch.Tensor):
+        return values.to(dtype=torch.float32).reshape(-1)
+    if isinstance(values, ak.Array):
+        values = ak.to_list(values)
+
+    array = np.asarray(values, dtype=np.float32)
+    if array.size == 0:
+        return torch.empty((0,), dtype=torch.float32)
+    return torch.as_tensor(array.reshape(-1), dtype=torch.float32)
+
+
 def tensorize_ecal_event(event):
     """
     Return:
@@ -129,6 +143,98 @@ def tensorize_ecal_node_classification(event, valid_labels=(1, 2, 3), filter_noi
         "keep_indices": keep_indices,
         "label_to_class": labels["label_to_class"],
         "class_to_label": labels["class_to_label"],
+    }
+
+
+def tensorize_trigger_pad_tracks(event):
+    """
+    Return TriggerPadTracks context features with shape [N_tpad, 2].
+
+    Columns are [centroid, pe]. The centroid_ leaf is treated as the relevant
+    1D y-like coordinate for this detector context.
+    """
+
+    trigger_pad_tracks = event.get("trigger_pad_tracks", {})
+    centroid = trigger_pad_tracks.get("centroid", event.get("tpad_centroid"))
+    pe = trigger_pad_tracks.get("pe", event.get("tpad_pe"))
+
+    centroid = _as_1d_float_tensor(centroid)
+    pe = _as_1d_float_tensor(pe)
+
+    if centroid.numel() == 0 and pe.numel() == 0:
+        return torch.empty((0, 2), dtype=torch.float32)
+    if centroid.numel() != pe.numel():
+        raise ValueError(
+            f"TriggerPadTracks centroid and pe lengths differ: "
+            f"{centroid.numel()} vs {pe.numel()}."
+        )
+
+    return torch.stack([centroid, pe], dim=1).to(dtype=torch.float32)
+
+
+def tensorize_ecal_with_triggerpad_context(event, valid_labels=(1, 2, 3), filter_noise=True):
+    """
+    Build one ECal + TriggerPadTracks node tensor for context-aware models.
+
+    Combined features are:
+        [is_ecal, is_tpad] + [ecal_x, ecal_y, ecal_z, ecal_energy] + [tpad_centroid, tpad_pe]
+
+    Labels are returned only for selected ECal nodes. TriggerPadTracks nodes are
+    context tokens/nodes and should be masked out of the supervised loss.
+    """
+
+    ecal = tensorize_ecal_node_classification(
+        event,
+        valid_labels=valid_labels,
+        filter_noise=filter_noise,
+    )
+    tpad = tensorize_trigger_pad_tracks(event)
+
+    ecal_x = ecal["x"]
+    num_ecal = ecal_x.shape[0]
+    num_tpad = tpad.shape[0]
+    ecal_feature_dim = ecal_x.shape[1]
+
+    ecal_nodes = torch.cat(
+        [
+            torch.ones((num_ecal, 1), dtype=torch.float32),
+            torch.zeros((num_ecal, 1), dtype=torch.float32),
+            ecal_x.to(dtype=torch.float32),
+            torch.zeros((num_ecal, 2), dtype=torch.float32),
+        ],
+        dim=1,
+    )
+
+    if num_tpad == 0:
+        tpad_nodes = torch.empty((0, ecal_nodes.shape[1]), dtype=torch.float32)
+    else:
+        tpad_nodes = torch.cat(
+            [
+                torch.zeros((num_tpad, 1), dtype=torch.float32),
+                torch.ones((num_tpad, 1), dtype=torch.float32),
+                torch.zeros((num_tpad, ecal_feature_dim), dtype=torch.float32),
+                tpad.to(dtype=torch.float32),
+            ],
+            dim=1,
+        )
+
+    x = torch.cat([ecal_nodes, tpad_nodes], dim=0)
+    ecal_mask = torch.zeros((x.shape[0],), dtype=torch.bool)
+    ecal_mask[:num_ecal] = True
+    tpad_mask = ~ecal_mask
+
+    return {
+        "x": x,
+        "ecal_pos": ecal["pos"],
+        "pos": ecal["pos"],
+        "tpad": tpad,
+        "ecal_mask": ecal_mask,
+        "tpad_mask": tpad_mask,
+        "y": ecal["y"],
+        "physical_y": ecal["physical_y"],
+        "keep_indices": ecal["keep_indices"],
+        "label_to_class": ecal["label_to_class"],
+        "class_to_label": ecal["class_to_label"],
     }
 
 

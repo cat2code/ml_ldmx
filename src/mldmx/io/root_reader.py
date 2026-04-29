@@ -191,3 +191,77 @@ def read_ecal_rechits_with_truth(root_path, max_events=10):
         events.append(event)
 
     return events
+
+
+def read_trigger_pad_tracks(root_path, max_events=10):
+    """
+    Read TriggerPadTracks overlay context information.
+
+    Each event has the form:
+        {
+            "centroid": list[float] [N_tracks],
+            "pe": list[float] [N_tracks],
+        }
+
+    Only centroid_ and pe_ are read. The centroid_ field is the useful 1D
+    coordinate for this detector context in the current prototype.
+    """
+
+    root_path = Path(root_path)
+    source = RootSource(path=str(root_path), tree_name="LDMX_Events")
+
+    vectors = get_vector_branches("trigger_pad_tracks", "overlay")
+    branch_names = list(vectors.values())
+
+    missing_branches = []
+    with uproot.open(source.path) as f:
+        tree = f[source.tree_name]
+        available_branches = set(tree.keys())
+        for branch_name in branch_names:
+            if branch_name not in available_branches:
+                missing_branches.append(branch_name)
+
+    if missing_branches:
+        raise KeyError(f"Missing required TriggerPadTracks branches: {missing_branches}")
+
+    arrays = read_branches(
+        source,
+        branch_names=branch_names,
+        entry_start=0,
+        entry_stop=max_events,
+    )
+
+    num_events = len(arrays[vectors["centroid"]])
+    events = []
+    for iev in range(num_events):
+        events.append(
+            {
+                "centroid": [float(v) for v in ak.to_list(arrays[vectors["centroid"]][iev])],
+                "pe": [float(v) for v in ak.to_list(arrays[vectors["pe"]][iev])],
+            }
+        )
+
+    return events
+
+
+def read_ecal_rechits_with_truth_and_triggerpad_context(root_path, max_events=10):
+    """
+    Read labelled ECal RecHits and attach TriggerPadTracks overlay context.
+
+    Existing ECal-only readers remain unchanged; new scripts opt into this
+    combined event shape explicitly.
+    """
+
+    events = read_ecal_rechits_with_truth(root_path, max_events=max_events)
+    trigger_pad_events = read_trigger_pad_tracks(root_path, max_events=max_events)
+
+    if len(events) != len(trigger_pad_events):
+        raise ValueError(
+            f"ECal reader returned {len(events)} events but TriggerPadTracks reader "
+            f"returned {len(trigger_pad_events)} events."
+        )
+
+    for event, trigger_pad_event in zip(events, trigger_pad_events):
+        event["trigger_pad_tracks"] = trigger_pad_event
+
+    return events

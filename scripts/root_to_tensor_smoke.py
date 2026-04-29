@@ -16,8 +16,13 @@ python3 scripts/root_to_tensor_smoke.py data/overlay_main10_pileup20_02/pileup.r
 
 
 def main():
+    project_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument("root_file")
+    parser.add_argument(
+        "root_file",
+        nargs="?",
+        default=project_root / "data/28apr_00/events.root",
+    )
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--stop", type=int, default=10)
     parser.add_argument("--max-hits", type=int, default=256)
