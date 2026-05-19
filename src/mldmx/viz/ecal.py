@@ -8,19 +8,25 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 
-def plot_ecal_hit_classes_3d(pos, physical_labels, output_path, title):
-    """Save a 3D ECal hit scatter plot colored by physical labels 1, 2, 3."""
+def plot_ecal_hit_classes_3d(pos, physical_labels, output_path, title, labels=None):
+    """Save a 3D ECal hit scatter plot colored by origin/class labels."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     pos = np.asarray(pos)
     physical_labels = np.asarray(physical_labels)
-    colors = {1: "tab:blue", 2: "tab:orange", 3: "tab:green"}
+    labels = [1, 2, 3] if labels is None else list(labels)
+    colors = {
+        0: "tab:gray",
+        1: "tab:blue",
+        2: "tab:orange",
+        3: "tab:green",
+    }
 
     fig = plt.figure(figsize=(9, 7))
     ax = fig.add_subplot(111, projection="3d")
 
-    for label in [1, 2, 3]:
+    for label in labels:
         mask = physical_labels == label
         if not np.any(mask):
             continue
@@ -30,12 +36,19 @@ def plot_ecal_hit_classes_3d(pos, physical_labels, output_path, title):
             pos[mask, 2],
             s=10,
             alpha=0.85,
-            color=colors[label],
+            color=colors.get(label, f"C{label % 10}"),
         )
 
     handles = [
-        Line2D([0], [0], marker="o", linestyle="", color=colors[label], label=str(label))
-        for label in [1, 2, 3]
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            color=colors.get(label, f"C{label % 10}"),
+            label=str(label),
+        )
+        for label in labels
     ]
     ax.legend(handles=handles, title="origin_id")
     ax.set_title(title)
