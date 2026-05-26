@@ -143,8 +143,8 @@ def parse_args():
         "--supervise-noise",
         action="store_true",
         help=(
-            "Advanced-model ROOT experiment only: retain noise_flag hits and assign "
-            "them to background class 0 with background-only fraction targets."
+            "Advanced model only: retain stored/ROOT noise_flag hits and assign them "
+            "to background class 0 with background-only fraction targets."
         ),
     )
     parser.add_argument("--no-progress", action="store_true")

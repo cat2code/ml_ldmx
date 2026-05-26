@@ -35,8 +35,11 @@ def parse_args():
     parser.add_argument("--max-root-files", type=int, default=None, help="Smoke-only limit applied per source.")
     parser.add_argument("--max-events-per-root-file", type=int, default=None, help="Smoke-only event limit per shard.")
     parser.add_argument("--read-step-size", type=int, default=500)
-    parser.add_argument("--supervise-noise", action="store_true")
-    parser.add_argument("--keep-noise", action="store_true")
+    parser.add_argument(
+        "--filter-noise",
+        action="store_true",
+        help="Discard noise hits in the stored shards. By default shards retain explicit noise targets for later training-time policy.",
+    )
     parser.add_argument("--skip-existing", action="store_true", help="Reuse already valid shard files while completing missing shards.")
     parser.add_argument("--force", action="store_true", help="Rebuild selected shard files even when a cache exists.")
     return parser.parse_args()
@@ -68,8 +71,6 @@ def root_specs_from_args(args):
 
 def main():
     args = parse_args()
-    if args.supervise_noise and args.keep_noise:
-        raise ValueError("--supervise-noise already retains noise; do not also pass --keep-noise.")
     if args.read_step_size < 0:
         raise ValueError("--read-step-size must be non-negative.")
     root_specs = root_specs_from_args(args)
@@ -77,12 +78,17 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     logger = logging.getLogger("preprocess_ecal_tpad_sharded")
     read_step_size = args.read_step_size if args.read_step_size > 0 else None
+    store_noise_targets = not args.filter_noise
+    logger.info(
+        "Stored noise policy: %s",
+        "retain flagged hits with explicit background targets" if store_noise_targets else "discard flagged hits",
+    )
     prepare_sharded_tensor_cache(
         output_dir,
         root_specs=root_specs,
         valid_labels=tuple(args.valid_labels),
-        filter_noise=not (args.keep_noise or args.supervise_noise),
-        supervise_noise=args.supervise_noise,
+        filter_noise=args.filter_noise,
+        supervise_noise=store_noise_targets,
         force=args.force,
         skip_existing=args.skip_existing or not args.force,
         max_root_files=args.max_root_files,

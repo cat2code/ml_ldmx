@@ -76,9 +76,9 @@ The two GravNet checks additionally require the PyTorch Geometric
 
 ### Slot Noise Experiment
 
-The normal slot workflow filters noise hits, so its background output class
-receives no hit-level training examples by default. To run the advanced model
-with explicit noise/background supervision from ROOT inputs:
+The normal slot workflow filters noise hits at training time, so its
+background output class receives no hit-level training examples by default.
+To run the advanced model with explicit noise/background supervision:
 
 ```powershell
 python scripts/train_ecal_tpad_slot_model.py `
@@ -89,10 +89,11 @@ python scripts/train_ecal_tpad_slot_model.py `
   --run-name slot_noise_experiment
 ```
 
-`--supervise-noise` is intentionally advanced-model-only and ROOT-backed:
-existing processed caches do not contain aligned noise targets. Flagged noise
-hits are assigned background class `0` and background-only fraction targets;
-they do not enter canonical-y electron ordering or electron-count targets.
+`--supervise-noise` is intentionally advanced-model-only. New sharded caches
+retain aligned noise targets by default and can be used with this option;
+legacy processed caches without `is_noise_target` cannot. Flagged noise hits
+are assigned background class `0` and background-only fraction targets; they
+do not enter canonical-y electron ordering or electron-count targets.
 The slot trainer rejects the legacy `--keep-noise` option because it does not
 supply background labels and can fail on flagged hits without contribution
 truth; use `--supervise-noise` explicitly.
@@ -230,20 +231,34 @@ data/processed/ecal_tpad_2e3e_sharded/
     shard_000002.pt
 ```
 
-Create a mixed `2e`/`3e` cache explicitly:
+Create independent caches for the physical source datasets:
 
 ```powershell
 python scripts/preprocess_ecal_tpad_sharded.py `
-  --source 2 2e data/ldmx_overlay_events_700k/2e/events `
-  --source 3 3e data/ldmx_overlay_events_700k/3e/events `
-  --output-dir data/processed/ecal_tpad_2e3e_sharded `
+  --input-root-dir data/ldmx_overlay_events_700k/2e/events `
+  --electron-count 2 `
+  --source-label 2e `
+  --output-dir data/processed/ecal_tpad_2e_sharded `
+  --skip-existing
+
+python scripts/preprocess_ecal_tpad_sharded.py `
+  --input-root-dir data/ldmx_overlay_events_700k/3e/events `
+  --electron-count 3 `
+  --source-label 3e `
+  --output-dir data/processed/ecal_tpad_3e_sharded `
   --skip-existing
 ```
 
 ROOT files are ordered by numeric suffix (`events_2.root` precedes
 `events_10.root`). Rerunning reuses valid completed shards and fills missing
-ones; pass `--force` to rebuild. The maintained trainers can also create a
-missing matching cache and then reuse it:
+ones; pass `--force` to rebuild. Sharded preprocessing retains explicit noise
+targets by default. Use `--filter-noise` only to deliberately write a
+noise-discarding cache.
+
+The current trainer interface can consume one sharded cache corresponding to
+its configured training dataset directly. A temporary combined-cache path is
+therefore still required for mixed `2e`/`3e` maintained training until the
+multi-cache dataset wrapper is added:
 
 ```powershell
 python scripts/train_hit_classifier_baseline.py `
@@ -260,11 +275,22 @@ selected ROOT files. `--max-events` can restrict the consumed events.
 If cache creation was interrupted and a short trial should use only its
 already completed valid shards, add `--allow-incomplete-sharded-cache`.
 Without this explicit flag, a trainer resumes creation of the missing shards.
+Training over separate `2e` and `3e` caches together requires the next
+multi-cache dataset-wrapper extension; the cache storage itself should remain
+separate.
+
+On a SLURM cluster, submit the generic preprocessing job once per independent
+source dataset:
+
+```bash
+sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/mldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/mldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+```
 
 Quick smoke validation uses temporary shards and leaves no cache behind:
 
 ```powershell
-python scripts/smoke_ecal_tpad_sharded_cache.py --device cpu --max-root-files 2 --max-events-per-root-file 2
+python scripts/smoke_ecal_tpad_sharded_cache.py --device cpu --max-root-files 2 --max-events-per-root-file 10
 ```
 
 The one-event-per-file processed format remains supported for existing small

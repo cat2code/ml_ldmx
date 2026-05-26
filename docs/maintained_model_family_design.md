@@ -153,9 +153,9 @@ cached canonical event.
 
 The slot model consumes the mixed-detector event and may additionally consume
 `fraction_target`, `electron_count`, and `is_noise_target`. Noise/background
-supervision is an explicit advanced-only ROOT-backed experiment:
+supervision is an explicit advanced-only training mode:
 
-- The normal slot workflow filters noise hits; output class `0` consequently
+- The normal slot workflow filters noise hits at training access time; output class `0` consequently
   has no hit-level positive targets by default.
 - `--supervise-noise` retains `noise_flag` hits and assigns them hard class
   `0`; this does not change the four baseline comparison paths.
@@ -174,9 +174,11 @@ supervision is an explicit advanced-only ROOT-backed experiment:
 - When a flagged noise hit has no physical-origin contribution,
   `origin_id_y=-1` marks unavailable provenance for that row.
 
-Existing processed tensor caches do not store `is_noise_target`; explicit
-noise supervision therefore bypasses them rather than silently changing their
-meaning.
+Legacy processed tensor caches do not store `is_noise_target`; explicit noise
+supervision cannot use them. New sharded caches store `is_noise_target` and
+background-labelled noise rows by default, allowing training runs to either
+filter noise at access time or explicitly supervise it without retensorizing
+ROOT files.
 
 ## ECal-Only Derived View
 
@@ -267,7 +269,8 @@ For large repeated training jobs, the scalable storage path is
 `src/mldmx/datasets/ecal_tpad_shards.py`: one numerically ordered input ROOT
 file is tensorized into one ML-ready `.pt` shard with a manifest and
 event-offset index. Shards store the same canonical combined event contract
-and physical-origin provenance. With `--processed-cache`, maintained trainers
+and physical-origin provenance, including explicit noise rows by default.
+With `--processed-cache`, maintained trainers
 validate ROOT-file and tensorization metadata before reuse, create missing
 caches once, apply canonical targets and training normalization lazily, and
 retain only recently accessed shards in memory. The legacy per-event `.pt`
@@ -277,7 +280,7 @@ format remains supported for existing small datasets.
 
 | Risk | Current observation | Required resolution |
 | --- | --- | --- |
-| Noise/background supervision | `ECalTpadSlotModel` reserves class `0`, but default tensorization filters noise and therefore does not train positive background hits. | Use explicit advanced-only `--supervise-noise` ROOT loading; noise rows are class `0`, excluded from canonical ordering/count, and receive background-only fraction targets. |
+| Noise/background supervision | `ECalTpadSlotModel` reserves class `0`, while default training filters noise and therefore does not train positive background hits. | Store explicit noise targets in new shards by default; use advanced-only `--supervise-noise` to retain them during training. Noise rows are class `0`, excluded from canonical ordering/count, and receive background-only fraction targets. |
 | Label meaning | Canonicalization currently overwrites `physical_y` with canonical slot numbers and stores original IDs in `origin_id_y`; other paths use `physical_y` for physical IDs. | Adopt immutable `origin_id_y` plus explicit `canonical_y`. |
 | Variable multiplicity canonicalization | Dataset-level `apply_target_mode()` requires every configured physical label, while the slot runner contains separate logic for mixed `2e`/`3e` samples. | Replace duplicate target mapping with one variable-count canonicalizer. |
 | Output contract | MLPF-lite uses three electron outputs; the slot model uses `max_electrons + 1` outputs and prepends an all-zero background fraction column. | Publish separate baseline and slot output schemas with tested conversions. |
