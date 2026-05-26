@@ -95,9 +95,9 @@ def parse_args():
     parser.add_argument("--resume", type=Path, default=None)
     parser.add_argument(
         "--device",
-        choices=("auto", "cpu", "cuda", "mps"),
+        choices=("auto", "cpu", "cuda"),
         default="auto",
-        help="Defaults to CUDA when available, then MPS, then CPU.",
+        help="Defaults to CUDA when available, otherwise CPU.",
     )
     parser.add_argument("--valid-labels", type=int, nargs="+", default=list(VALID_LABELS))
     parser.add_argument(
