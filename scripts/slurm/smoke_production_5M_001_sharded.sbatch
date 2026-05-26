@@ -24,8 +24,17 @@ READ_STEP_SIZE="${READ_STEP_SIZE:-100}"
 MAX_ROOT_FILES="${MAX_ROOT_FILES:-1}"
 MAX_EVENTS_PER_ROOT_FILE="${MAX_EVENTS_PER_ROOT_FILE:-100}"
 
+module purge
+module load GCCcore/13.2.0
+module load Python/3.11.5
+
 if [[ ! -f "${REPO_DIR}/mldmx/scripts/preprocess_ecal_tpad_sharded.py" ]]; then
   echo "Missing preprocessor in repository: ${REPO_DIR}/mldmx/scripts/preprocess_ecal_tpad_sharded.py" >&2
+  exit 1
+fi
+
+if [[ ! -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+  echo "Missing Python virtual environment: ${REPO_DIR}/.venv/bin/activate" >&2
   exit 1
 fi
 
@@ -37,6 +46,7 @@ for label in 2e 3e; do
 done
 
 cd "${REPO_DIR}"
+source .venv/bin/activate
 
 echo "Smoke-test tensorization"
 echo "Work area:       ${WORK_DIR}"
@@ -45,8 +55,11 @@ echo "ROOT dataset:    ${DATASET_DIR}"
 echo "Shard output:    ${OUTPUT_ROOT}"
 echo "ROOT files/type: ${MAX_ROOT_FILES}"
 echo "Events/file:     ${MAX_EVENTS_PER_ROOT_FILE}"
-echo "Python:          ${PYTHON_BIN}"
+echo "Python:          $(command -v "${PYTHON_BIN}")"
+echo "Python version:  $("${PYTHON_BIN}" --version 2>&1)"
 echo "Started:         $(date)"
+
+"${PYTHON_BIN}" -c "import awkward, torch, uproot; print('Required imports available: awkward, torch, uproot')"
 
 for electron_count in 2 3; do
   label="${electron_count}e"
