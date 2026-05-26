@@ -45,22 +45,33 @@ def fraction_targets_from_event(
 ) -> torch.Tensor:
     num_classes = max_electrons + 1
     if "fraction_target" not in event:
-        return F.one_hot(origin_target.clamp(0, max_electrons), num_classes=num_classes).float()
+        target = F.one_hot(origin_target.clamp(0, max_electrons), num_classes=num_classes).float()
+    else:
+        fraction_target = event["fraction_target"].to(dtype=torch.float32)
+        if fraction_target.shape[1] == num_classes:
+            target = fraction_target
+        elif fraction_target.shape[1] == max_electrons:
+            noise_column = torch.zeros(
+                (fraction_target.shape[0], 1),
+                dtype=fraction_target.dtype,
+                device=fraction_target.device,
+            )
+            target = torch.cat([noise_column, fraction_target], dim=1)
+        else:
+            raise ValueError(
+                f"Expected fraction_target with {max_electrons} or {num_classes} columns, "
+                f"got {fraction_target.shape[1]}."
+            )
 
-    fraction_target = event["fraction_target"].to(dtype=torch.float32)
-    if fraction_target.shape[1] == num_classes:
-        return fraction_target
-    if fraction_target.shape[1] == max_electrons:
-        noise_column = torch.zeros(
-            (fraction_target.shape[0], 1),
-            dtype=fraction_target.dtype,
-            device=fraction_target.device,
-        )
-        return torch.cat([noise_column, fraction_target], dim=1)
-    raise ValueError(
-        f"Expected fraction_target with {max_electrons} or {num_classes} columns, "
-        f"got {fraction_target.shape[1]}."
-    )
+    noise_mask = event.get("is_noise_target")
+    if noise_mask is not None:
+        noise_mask = noise_mask.to(dtype=torch.bool)
+        if noise_mask.shape != (target.shape[0],):
+            raise ValueError("event['is_noise_target'] must align with fraction targets.")
+        target = target.clone()
+        target[noise_mask] = 0.0
+        target[noise_mask, 0] = 1.0
+    return target
 
 
 def slot_targets_from_event(
@@ -281,11 +292,14 @@ def event_prediction_record(event_idx: int, event: dict, losses: dict) -> dict:
 
 def train_one_epoch(model, events, train_indices, optimizer, args, device, epoch, logger):
     model.train()
-    generator = torch.Generator().manual_seed(args.seed + epoch)
-    shuffled_indices = [
-        train_indices[idx]
-        for idx in torch.randperm(len(train_indices), generator=generator).tolist()
-    ]
+    if hasattr(events, "order_indices_for_access"):
+        shuffled_indices = events.order_indices_for_access(train_indices, seed=args.seed + epoch)
+    else:
+        generator = torch.Generator().manual_seed(args.seed + epoch)
+        shuffled_indices = [
+            train_indices[idx]
+            for idx in torch.randperm(len(train_indices), generator=generator).tolist()
+        ]
     batch_indices = list(chunks(shuffled_indices, args.batch_size))
     totals = empty_slot_metric_totals(
         num_hit_classes=args.max_electrons + 1,

@@ -29,14 +29,20 @@ def save_config(args, run_dir, data_dir, root_files, event_sources, splits, targ
     for key, value in list(payload.items()):
         if isinstance(value, Path):
             payload[key] = str(value)
+    if hasattr(event_sources, "source_files"):
+        source_files = event_sources.source_files
+        num_loaded_events = len(event_sources)
+    else:
+        source_files = [source["file"] for source in event_sources]
+        num_loaded_events = len(event_sources)
     payload.update(
         {
             "resolved_data_dir": str(data_dir),
             "root_files_used": sorted(
-                {source["file"] for source in event_sources},
+                set(source_files),
                 key=lambda name: root_file_sort_key(Path(name)),
             ),
-            "num_loaded_events": len(event_sources),
+            "num_loaded_events": num_loaded_events,
             "split_sizes": {key: len(value) for key, value in splits.items()},
             "target_order_counts": target_order_counts_by_split,
         }

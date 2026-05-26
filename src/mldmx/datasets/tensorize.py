@@ -71,18 +71,33 @@ def tensorize_ecal_truth(event):
     return truth
 
 
-def dominant_origin_class_labels(event, valid_labels=(1, 2, 3), filter_noise=True):
+def dominant_origin_class_labels(
+    event,
+    valid_labels=(1, 2, 3),
+    filter_noise=True,
+    supervise_noise=False,
+):
     """
     Build per-hit class labels from the dominant deposited-energy contribution.
 
-    The physical labels are origin IDs in valid_labels. Returned class labels are
-    zero-based for PyTorch losses, with label 1 -> class 0, label 2 -> class 1,
-    and label 3 -> class 2 by default.
+    The physical labels are origin IDs in valid_labels. By default, returned
+    class labels are zero-based for PyTorch losses. With ``supervise_noise``,
+    retained ``noise_flag`` hits receive physical/class label 0 for the
+    advanced slot-model background output; non-noise physical origin IDs are
+    retained for later canonical slot mapping.
     """
-    label_to_class = {label: idx for idx, label in enumerate(valid_labels)}
+    if supervise_noise and filter_noise:
+        raise ValueError("supervise_noise requires filter_noise=False so labelled noise hits are retained.")
+
+    label_offset = 1 if supervise_noise else 0
+    label_to_class = {label: idx + label_offset for idx, label in enumerate(valid_labels)}
+    if supervise_noise:
+        label_to_class[0] = 0
     keep_indices = []
     physical_labels = []
     class_labels = []
+    selected_noise_flags = []
+    origin_id_labels = []
 
     noise_flags = event.get("noise_flag", [False] * len(event["x"]))
     hit_ids = event.get("hit_id", list(range(len(event["x"]))))
@@ -90,7 +105,19 @@ def dominant_origin_class_labels(event, valid_labels=(1, 2, 3), filter_noise=Tru
     for ihit, (edeps, origins, is_noise) in enumerate(
         zip(event["edep_contribs"], event["origin_id_contribs"], noise_flags)
     ):
-        if filter_noise and bool(is_noise):
+        is_noise = bool(is_noise)
+        if filter_noise and is_noise:
+            continue
+
+        if supervise_noise and is_noise:
+            keep_indices.append(ihit)
+            physical_labels.append(0)
+            class_labels.append(0)
+            selected_noise_flags.append(True)
+            if edeps and len(edeps) == len(origins):
+                origin_id_labels.append(int(origins[int(np.argmax(edeps))]))
+            else:
+                origin_id_labels.append(-1)
             continue
 
         if len(edeps) == 0:
@@ -114,20 +141,31 @@ def dominant_origin_class_labels(event, valid_labels=(1, 2, 3), filter_noise=Tru
         keep_indices.append(ihit)
         physical_labels.append(physical_label)
         class_labels.append(label_to_class[physical_label])
+        selected_noise_flags.append(False)
+        origin_id_labels.append(physical_label)
 
     if not keep_indices:
         raise ValueError("No ECal hits remain after applying label/noise selection.")
 
-    return {
+    labels = {
         "keep_indices": torch.tensor(keep_indices, dtype=torch.long),
         "physical_labels": torch.tensor(physical_labels, dtype=torch.long),
         "class_labels": torch.tensor(class_labels, dtype=torch.long),
         "label_to_class": label_to_class,
         "class_to_label": {idx: label for label, idx in label_to_class.items()},
     }
+    if supervise_noise:
+        labels["is_noise_target"] = torch.tensor(selected_noise_flags, dtype=torch.bool)
+        labels["origin_id_labels"] = torch.tensor(origin_id_labels, dtype=torch.long)
+    return labels
 
 
-def origin_energy_fraction_targets(event, keep_indices, valid_labels=(1, 2, 3)):
+def origin_energy_fraction_targets(
+    event,
+    keep_indices,
+    valid_labels=(1, 2, 3),
+    is_noise_target=None,
+):
     """
     Build soft per-hit origin-composition targets from deposited energy fractions.
 
@@ -150,8 +188,14 @@ def origin_energy_fraction_targets(event, keep_indices, valid_labels=(1, 2, 3)):
         keep_indices = ak.to_list(keep_indices)
 
     targets = torch.zeros((len(keep_indices), len(valid_labels)), dtype=torch.float32)
+    if is_noise_target is not None:
+        is_noise_target = torch.as_tensor(is_noise_target, dtype=torch.bool).reshape(-1)
+        if is_noise_target.shape[0] != len(keep_indices):
+            raise ValueError("is_noise_target must align with kept ECal hits for fraction targets.")
 
     for row_idx, ihit in enumerate(keep_indices):
+        if is_noise_target is not None and bool(is_noise_target[row_idx].item()):
+            continue
         ihit = int(ihit)
         if ihit < 0 or ihit >= len(event["edep_contribs"]):
             raise ValueError(
@@ -187,15 +231,21 @@ def origin_energy_fraction_targets(event, keep_indices, valid_labels=(1, 2, 3)):
     return targets
 
 
-def tensorize_ecal_node_classification(event, valid_labels=(1, 2, 3), filter_noise=True):
+def tensorize_ecal_node_classification(
+    event,
+    valid_labels=(1, 2, 3),
+    filter_noise=True,
+    supervise_noise=False,
+):
     x, pos = tensorize_ecal_event(event)
     labels = dominant_origin_class_labels(
         event,
         valid_labels=valid_labels,
         filter_noise=filter_noise,
+        supervise_noise=supervise_noise,
     )
     keep_indices = labels["keep_indices"]
-    return {
+    tensors = {
         "x": x[keep_indices],
         "pos": pos[keep_indices],
         "y": labels["class_labels"],
@@ -204,6 +254,10 @@ def tensorize_ecal_node_classification(event, valid_labels=(1, 2, 3), filter_noi
         "label_to_class": labels["label_to_class"],
         "class_to_label": labels["class_to_label"],
     }
+    if supervise_noise:
+        tensors["is_noise_target"] = labels["is_noise_target"]
+        tensors["origin_id_y"] = labels["origin_id_labels"]
+    return tensors
 
 
 def tensorize_trigger_pad_tracks(event):
@@ -232,7 +286,12 @@ def tensorize_trigger_pad_tracks(event):
     return torch.stack([centroid, pe], dim=1).to(dtype=torch.float32)
 
 
-def tensorize_ecal_with_triggerpad_context(event, valid_labels=(1, 2, 3), filter_noise=True):
+def tensorize_ecal_with_triggerpad_context(
+    event,
+    valid_labels=(1, 2, 3),
+    filter_noise=True,
+    supervise_noise=False,
+):
     """
     Build one ECal + TriggerPadTracks node tensor for context-aware models.
 
@@ -247,6 +306,7 @@ def tensorize_ecal_with_triggerpad_context(event, valid_labels=(1, 2, 3), filter
         event,
         valid_labels=valid_labels,
         filter_noise=filter_noise,
+        supervise_noise=supervise_noise,
     )
     tpad = tensorize_trigger_pad_tracks(event)
 
@@ -283,7 +343,7 @@ def tensorize_ecal_with_triggerpad_context(event, valid_labels=(1, 2, 3), filter
     ecal_mask[:num_ecal] = True
     tpad_mask = ~ecal_mask
 
-    return {
+    tensors = {
         "x": x,
         "ecal_pos": ecal["pos"],
         "pos": ecal["pos"],
@@ -296,6 +356,10 @@ def tensorize_ecal_with_triggerpad_context(event, valid_labels=(1, 2, 3), filter
         "label_to_class": ecal["label_to_class"],
         "class_to_label": ecal["class_to_label"],
     }
+    for key in ("is_noise_target", "origin_id_y"):
+        if key in ecal:
+            tensors[key] = ecal[key]
+    return tensors
 
 
 def ecal_hits_to_padded_tensor(arrays, vector_branches, max_hits=256):

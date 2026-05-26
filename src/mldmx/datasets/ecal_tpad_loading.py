@@ -7,6 +7,15 @@ from mldmx.datasets.tensorize import (
     origin_energy_fraction_targets,
     tensorize_ecal_with_triggerpad_context,
 )
+from mldmx.datasets.ecal_tpad_dataset import ECalTriggerPadTensorDataset
+from mldmx.datasets.ecal_tpad_shards import (
+    ShardedECalTpadDataset,
+    has_sharded_tensor_cache,
+    prepare_sharded_tensor_cache,
+    validate_sharded_cache_request,
+    validate_sharded_tensor_cache,
+)
+from mldmx.io.root_files import find_root_files
 from mldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
 
 
@@ -50,6 +59,7 @@ def apply_target_mode(tensors, valid_labels, target_mode):
         [label_to_canonical_class[int(label)] for label in original_physical_y.tolist()],
         dtype=torch.long,
     )
+    tensors["canonical_y"] = tensors["y"].clone()
     tensors["physical_y"] = tensors["y"] + 1
     tensors["fraction_target"] = original_fraction_target[:, canonical_columns]
     tensors["target_label_order"] = ordered_labels
@@ -61,29 +71,301 @@ def apply_target_mode(tensors, valid_labels, target_mode):
     return tensors
 
 
+def apply_variable_count_target_mode(tensors, valid_labels, target_mode, max_electrons):
+    """
+    Apply spatially ordered slot targets for events with varying multiplicity.
+
+    This is the mixed-count counterpart to ``apply_target_mode``. Canonical
+    targets retain their original physical-origin labels in ``origin_id_y`` and
+    ``origin_id_fraction_target`` for provenance.
+    """
+    noise_mask = tensors.get("is_noise_target")
+    if noise_mask is not None:
+        noise_mask = noise_mask.to(dtype=torch.bool)
+        if noise_mask.shape != tensors["physical_y"].shape:
+            raise ValueError(
+                "event['is_noise_target'] must align with event['physical_y'] for canonicalization."
+            )
+    else:
+        noise_mask = torch.zeros_like(tensors["physical_y"], dtype=torch.bool)
+
+    axis = canonical_axis_from_target_mode(target_mode)
+    if axis is None:
+        if bool(noise_mask.any().item()):
+            raise ValueError("Explicit noise supervision currently requires a canonical target mode.")
+        tensors["target_class_names"] = [f"origin {label}" for label in valid_labels]
+        tensors["target_label_order"] = list(valid_labels)
+        return tensors
+
+    if "physical_y" not in tensors or "ecal_pos" not in tensors:
+        raise KeyError("Canonical slot target mode requires event['physical_y'] and event['ecal_pos'].")
+
+    assignment_y = tensors["physical_y"].clone()
+    original_physical_y = tensors.get("origin_id_y", assignment_y).clone()
+    pos = tensors["ecal_pos"]
+    electron_mask = ~noise_mask
+    present_labels = sorted({int(label) for label in assignment_y[electron_mask].tolist()})
+    if len(present_labels) > max_electrons:
+        raise ValueError(
+            f"Event has {len(present_labels)} origin labels, but max_electrons={max_electrons}."
+        )
+
+    label_means = []
+    for label in present_labels:
+        mask = electron_mask & (assignment_y == label)
+        label_means.append((label, float(pos[mask, axis].mean().item())))
+    ordered_labels = [label for label, _mean in sorted(label_means, key=lambda item: (item[1], item[0]))]
+    label_to_slot = {label: slot_idx + 1 for slot_idx, label in enumerate(ordered_labels)}
+
+    tensors["origin_id_y"] = original_physical_y
+    canonical_y = torch.full_like(assignment_y, -1)
+    model_target = torch.zeros_like(assignment_y)
+    for label, slot_class in label_to_slot.items():
+        label_mask = electron_mask & (assignment_y == label)
+        canonical_y[label_mask] = slot_class - 1
+        model_target[label_mask] = slot_class
+    tensors["y"] = canonical_y
+    tensors["canonical_y"] = canonical_y.clone()
+    tensors["physical_y"] = model_target
+    tensors["target_label_order"] = ordered_labels
+
+    if "fraction_target" in tensors:
+        original_fraction = tensors.get("origin_id_fraction_target", tensors["fraction_target"]).clone()
+        tensors["origin_id_fraction_target"] = original_fraction
+        if original_fraction.shape[1] == max_electrons + 1:
+            original_fraction = original_fraction[:, 1:]
+        if original_fraction.shape[1] != len(valid_labels):
+            raise ValueError(
+                f"Expected {len(valid_labels)} physical-origin fraction columns before canonicalization, "
+                f"got {original_fraction.shape[1]}."
+            )
+        physical_label_to_column = {label: idx for idx, label in enumerate(valid_labels)}
+        canonical_fraction = torch.zeros(
+            (original_fraction.shape[0], max_electrons),
+            dtype=original_fraction.dtype,
+            device=original_fraction.device,
+        )
+        for slot_idx, label in enumerate(ordered_labels):
+            source_col = physical_label_to_column.get(int(label))
+            if source_col is not None:
+                canonical_fraction[electron_mask, slot_idx] = original_fraction[electron_mask, source_col]
+        tensors["fraction_target"] = canonical_fraction
+
+    axis_name = {0: "x", 1: "y", 2: "z"}[axis]
+    electron_target_names = [
+        f"slot {slot_idx + 1}: {axis_name}-rank {slot_idx + 1}"
+        for slot_idx in range(max_electrons)
+    ]
+    tensors["target_class_names"] = (
+        ["noise/background"] + electron_target_names
+        if bool(noise_mask.any().item())
+        else electron_target_names
+    )
+    return tensors
+
+
+def apply_variable_count_target_mode_to_events(events, valid_labels, target_mode, max_electrons):
+    for event in events:
+        apply_variable_count_target_mode(
+            event,
+            valid_labels=valid_labels,
+            target_mode=target_mode,
+            max_electrons=max_electrons,
+        )
+
+
+def filter_noise_tensor_event(event):
+    """Remove stored ECal noise rows while retaining the canonical combined layout."""
+    noise_mask = event.get("is_noise_target")
+    if noise_mask is None:
+        return event
+    noise_mask = noise_mask.to(dtype=torch.bool)
+    if noise_mask.ndim != 1 or noise_mask.shape != event["physical_y"].shape:
+        raise ValueError("event['is_noise_target'] must align with ECal hit targets.")
+    if not bool(noise_mask.any().item()):
+        return event
+
+    filtered = dict(event)
+    ecal_mask = event["ecal_mask"].to(dtype=torch.bool)
+    tpad_mask = event["tpad_mask"].to(dtype=torch.bool)
+    ecal_rows = event["x"][ecal_mask][~noise_mask]
+    tpad_rows = event["x"][tpad_mask]
+    filtered["x"] = torch.cat([ecal_rows, tpad_rows], dim=0)
+    filtered["ecal_mask"] = torch.cat(
+        [
+            torch.ones((ecal_rows.shape[0],), dtype=torch.bool),
+            torch.zeros((tpad_rows.shape[0],), dtype=torch.bool),
+        ]
+    )
+    filtered["tpad_mask"] = ~filtered["ecal_mask"]
+
+    for key in (
+        "ecal_pos",
+        "pos",
+        "y",
+        "physical_y",
+        "origin_id_y",
+        "canonical_y",
+        "keep_indices",
+        "is_noise_target",
+        "fraction_target",
+        "origin_id_fraction_target",
+    ):
+        if key in event:
+            filtered[key] = event[key][~noise_mask]
+    return filtered
+
+
 def ecal_tpad_event_to_tensors(
     event,
     event_idx,
     valid_labels,
     target_mode="physical-origin",
     filter_noise=True,
+    supervise_noise=False,
 ):
     tensors = tensorize_ecal_with_triggerpad_context(
         event,
         valid_labels=valid_labels,
         filter_noise=filter_noise,
+        supervise_noise=supervise_noise,
     )
     tensors["event_idx"] = event_idx
     tensors["fraction_target"] = origin_energy_fraction_targets(
         event,
         keep_indices=tensors["keep_indices"],
         valid_labels=valid_labels,
+        is_noise_target=tensors.get("is_noise_target"),
     )
     return apply_target_mode(
         tensors,
         valid_labels=valid_labels,
         target_mode=target_mode,
     )
+
+
+def has_processed_tensor_events(processed_dir):
+    processed_dir = Path(processed_dir)
+    return processed_dir.exists() and any(processed_dir.glob("event_*.pt"))
+
+
+def load_processed_tensor_events(processed_dir, max_events=None, logger=None):
+    """Load canonical combined tensor events without changing their stored format."""
+    logger = logger or logging.getLogger(__name__)
+    processed_dir = Path(processed_dir)
+    dataset = ECalTriggerPadTensorDataset(processed_dir)
+    limit = len(dataset) if max_events is None else min(max_events, len(dataset))
+    events = []
+    event_sources = []
+    for dataset_idx in range(limit):
+        event = dict(dataset[dataset_idx])
+        event_file = dataset.event_files[dataset_idx]
+        if "event_idx" not in event:
+            event["event_idx"] = torch.tensor(dataset_idx, dtype=torch.long)
+        event["source_file"] = event_file.name
+        events.append(event)
+        event_sources.append(
+            {
+                "event_idx": dataset_idx,
+                "file": event_file.name,
+                "entry": dataset_idx,
+                "source": "processed",
+            }
+        )
+    logger.info("Loaded %s processed tensor events from %s", len(events), processed_dir)
+    return events, event_sources
+
+
+def load_or_create_sharded_tensor_events(
+    processed_cache,
+    root_specs,
+    valid_labels,
+    max_events=None,
+    filter_noise=False,
+    supervise_noise=True,
+    force=False,
+    skip_existing=True,
+    max_root_files=None,
+    max_events_per_root_file=None,
+    shard_cache_size=1,
+    allow_incomplete_cache=False,
+    logger=None,
+    read_step_size=500,
+):
+    """Reuse or create an ML-ready sharded cache and return its lazy dataset."""
+    logger = logger or logging.getLogger(__name__)
+    processed_cache = Path(processed_cache)
+    build_cache = force or not has_sharded_tensor_cache(processed_cache)
+    if not build_cache:
+        validate_sharded_cache_request(
+            processed_cache,
+            root_specs=root_specs,
+            valid_labels=valid_labels,
+            filter_noise=filter_noise,
+            supervise_noise=supervise_noise,
+            max_root_files=max_root_files,
+            max_events_per_root_file=max_events_per_root_file,
+        )
+        try:
+            validate_sharded_tensor_cache(
+                processed_cache,
+                load_shards=False,
+                allow_incomplete=allow_incomplete_cache,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            logger.info("Resuming incomplete sharded tensor cache (%s)", exc)
+            build_cache = True
+    if build_cache:
+        prepare_sharded_tensor_cache(
+            cache_dir=processed_cache,
+            root_specs=root_specs,
+            valid_labels=valid_labels,
+            filter_noise=filter_noise,
+            supervise_noise=supervise_noise,
+            force=force,
+            skip_existing=skip_existing,
+            max_root_files=max_root_files,
+            max_events_per_root_file=max_events_per_root_file,
+            read_step_size=read_step_size,
+            logger=logger,
+        )
+    elif allow_incomplete_cache:
+        logger.warning("Using only valid completed shards from an incomplete cache: %s", processed_cache)
+    else:
+        logger.info("Using existing sharded tensor cache: %s", processed_cache)
+    dataset = ShardedECalTpadDataset(
+        processed_cache,
+        max_events=max_events,
+        shard_cache_size=shard_cache_size,
+        allow_incomplete=allow_incomplete_cache,
+    )
+    manifest_spec = dataset.metadata.get("cache_spec", {})
+    requested = {
+        "valid_labels": list(valid_labels),
+        "filter_noise": bool(filter_noise),
+        "supervise_noise": bool(supervise_noise),
+    }
+    mismatches = {
+        key: (manifest_spec.get(key), value)
+        for key, value in requested.items()
+        if manifest_spec.get(key) != value
+    }
+    if mismatches:
+        raise ValueError(
+            f"Existing sharded cache target/filter settings do not match requested training: {mismatches}."
+        )
+    return dataset, dataset, processed_cache, dataset.root_files
+
+
+def attach_root_source_metadata(event, source, global_event_idx, electron_count=None, source_label=None):
+    """Attach selected ROOT source metadata to one canonical tensor event."""
+    event["event_idx"] = torch.tensor(global_event_idx, dtype=torch.long)
+    if electron_count is not None:
+        event["electron_count"] = torch.tensor(electron_count, dtype=torch.long)
+    if source_label is not None:
+        event["source_label"] = source_label
+    event["source_file"] = source["file"]
+    event["source_entry"] = int(source["entry"])
 
 
 def _identity_progress(iterable, total=None, desc="", disable=False):
@@ -118,6 +400,7 @@ def load_ecal_tpad_tensor_events(
     valid_labels,
     target_mode="physical-origin",
     filter_noise=True,
+    supervise_noise=False,
     allow_fewer_events=False,
     data_dir=None,
     logger=None,
@@ -173,6 +456,7 @@ def load_ecal_tpad_tensor_events(
             valid_labels=valid_labels,
             target_mode=target_mode,
             filter_noise=filter_noise,
+            supervise_noise=supervise_noise,
         )
         selected_events.append(tensor_event)
         event_sources.append(
@@ -203,3 +487,133 @@ def load_ecal_tpad_tensor_events(
 
     logger.info("Loaded %s tensorized events", len(selected_events))
     return selected_events, event_sources
+
+
+def load_grouped_root_tensor_events(
+    root_specs,
+    events_per_source,
+    valid_labels,
+    filter_noise=True,
+    supervise_noise=False,
+    allow_fewer_events=False,
+    logger=None,
+    progress_factory=None,
+    disable_progress=False,
+    event_log_every=0,
+    read_step_size=500,
+):
+    """
+    Load multiple labelled ROOT source groups into the canonical combined form.
+
+    ``root_specs`` contains ``(electron_count, source_label, data_dir)`` tuples.
+    Events are tensorized with physical-origin targets first so callers can
+    apply one comparison target convention across mixed source groups.
+    """
+    logger = logger or logging.getLogger(__name__)
+    events = []
+    event_sources = []
+    root_files_used = []
+
+    for electron_count, source_label, data_dir in root_specs:
+        data_dir = Path(data_dir)
+        if not data_dir.exists():
+            raise FileNotFoundError(f"Could not find {source_label} ROOT directory: {data_dir}")
+        root_files = find_root_files(data_dir)
+        root_files_used.extend(root_files)
+        logger.info(
+            "Loading up to %s %s events from %s",
+            events_per_source,
+            source_label,
+            data_dir,
+        )
+        loaded_events, sources = load_ecal_tpad_tensor_events(
+            root_files=root_files,
+            max_events=events_per_source,
+            valid_labels=tuple(valid_labels),
+            target_mode="physical-origin",
+            filter_noise=filter_noise,
+            supervise_noise=supervise_noise,
+            allow_fewer_events=allow_fewer_events,
+            data_dir=data_dir,
+            logger=logger,
+            progress_factory=progress_factory,
+            disable_progress=disable_progress,
+            event_log_every=event_log_every,
+            read_step_size=read_step_size,
+        )
+        for event, source in zip(loaded_events, sources):
+            global_event_idx = len(events)
+            attach_root_source_metadata(
+                event,
+                source,
+                global_event_idx=global_event_idx,
+                electron_count=electron_count,
+                source_label=source_label,
+            )
+            event_sources.append(
+                {
+                    **source,
+                    "event_idx": global_event_idx,
+                    "electron_count": electron_count,
+                    "source_label": source_label,
+                    "source_dir": str(data_dir),
+                }
+            )
+            events.append(event)
+
+    return events, event_sources, root_files_used
+
+
+def load_processed_or_grouped_root_tensor_events(
+    processed_dir,
+    root_specs,
+    root_data_dir,
+    events_per_source,
+    max_processed_events,
+    valid_labels,
+    filter_noise=True,
+    supervise_noise=False,
+    allow_fewer_events=False,
+    logger=None,
+    progress_factory=None,
+    disable_progress=False,
+    event_log_every=0,
+    read_step_size=500,
+):
+    """Select an existing processed canonical dataset or build events from ROOT groups."""
+    logger = logger or logging.getLogger(__name__)
+    processed_dir = Path(processed_dir)
+    if has_processed_tensor_events(processed_dir):
+        if supervise_noise:
+            raise ValueError(
+                "Explicit noise supervision requires ROOT-backed tensorization; "
+                "existing processed events do not contain noise targets."
+            )
+        logger.info("Using processed tensor dataset: %s", processed_dir)
+        events, event_sources = load_processed_tensor_events(
+            processed_dir,
+            max_events=max_processed_events,
+            logger=logger,
+        )
+        return events, event_sources, processed_dir, []
+
+    root_data_dir = Path(root_data_dir)
+    logger.info(
+        "Processed dir %s not found or empty; loading grouped ROOT events from %s",
+        processed_dir,
+        root_data_dir,
+    )
+    events, event_sources, root_files = load_grouped_root_tensor_events(
+        root_specs=root_specs,
+        events_per_source=events_per_source,
+        valid_labels=valid_labels,
+        filter_noise=filter_noise,
+        supervise_noise=supervise_noise,
+        allow_fewer_events=allow_fewer_events,
+        logger=logger,
+        progress_factory=progress_factory,
+        disable_progress=disable_progress,
+        event_log_every=event_log_every,
+        read_step_size=read_step_size,
+    )
+    return events, event_sources, root_data_dir, root_files

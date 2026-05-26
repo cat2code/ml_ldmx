@@ -7,6 +7,24 @@ def resolve_run_dir(args):
     return args.output_dir / run_name
 
 
+def resolve_existing_path(path, project_root=None):
+    """Resolve an existing path relative to common project invocation roots."""
+    path = Path(path)
+    if path.exists():
+        return path
+
+    roots = []
+    if project_root is not None:
+        roots.extend([Path(project_root), Path(project_root).parent])
+    roots.append(Path.cwd())
+
+    for root in roots:
+        candidate = root / path
+        if candidate.exists():
+            return candidate
+    return path
+
+
 def resolve_data_dir(data_dir, project_root=None, default_relative="data/ldmx_overlay_events_700k/3e/events"):
     if data_dir.exists():
         return data_dir

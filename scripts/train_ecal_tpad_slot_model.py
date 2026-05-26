@@ -24,24 +24,35 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_dataset import ECalTriggerPadTensorDataset
-from mldmx.datasets.ecal_tpad_loading import canonical_axis_from_target_mode, load_ecal_tpad_tensor_events
-from mldmx.datasets.preprocess import normalize_continuous_features
+from mldmx.datasets.ecal_tpad_loading import (
+    apply_variable_count_target_mode,
+    apply_variable_count_target_mode_to_events,
+    filter_noise_tensor_event,
+    load_grouped_root_tensor_events,
+    load_or_create_sharded_tensor_events,
+    load_processed_or_grouped_root_tensor_events,
+)
+from mldmx.datasets.ecal_tpad_shards import ShardedECalTpadDataset
+from mldmx.datasets.preprocess import (
+    fit_continuous_feature_normalization,
+    normalize_continuous_features,
+    normalize_event_continuous_features,
+)
 from mldmx.datasets.stats import count_classes, target_order_counts
 from mldmx.eval.ecal_tpad_slot_model import evaluate
 from mldmx.io.artifacts import save_config, save_history, save_json
-from mldmx.io.root_files import find_root_files
 from mldmx.models import ECalTpadSlotModel
 from mldmx.train.checkpoints import load_checkpoint, save_checkpoint
 from mldmx.train.ecal_tpad_slot_model import train_one_epoch
 from mldmx.train.ecal_tpad_slot_model import ecal_mask_from_event
 from mldmx.train.logging import setup_logging
 from mldmx.train.modeling import count_trainable_parameters
-from mldmx.train.paths import resolve_run_dir
+from mldmx.train.paths import resolve_existing_path, resolve_run_dir
 from mldmx.train.progress import make_progress
 from mldmx.train.splits import deterministic_split
+from mldmx.train.utils import resolve_device
 from mldmx.viz.event_level import plot_event_count_confusion_matrix
-from mldmx.viz.ecal import plot_ecal_hit_classes_3d
+from mldmx.viz.ecal import plot_ecal_truth_prediction_pair
 from mldmx.viz.training import plot_confusion_matrix, plot_history
 
 
@@ -59,6 +70,21 @@ def parse_args():
     parser.add_argument("--max-events", type=int, default=None, help="Optional limit for processed datasets.")
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--processed-dir", type=Path, default=DEFAULT_PROCESSED_DIR)
+    parser.add_argument(
+        "--processed-cache",
+        type=Path,
+        default=None,
+        help="ML-ready sharded cache to reuse or create from --data-root (one ROOT file per shard).",
+    )
+    parser.add_argument("--force-sharded-cache", action="store_true", help="Rebuild requested sharded cache files.")
+    parser.add_argument(
+        "--allow-incomplete-sharded-cache",
+        action="store_true",
+        help="Train only from already completed valid shards instead of completing a partial cache.",
+    )
+    parser.add_argument("--max-cache-root-files", type=int, default=None, help="Limit ROOT files per source when creating a smoke cache.")
+    parser.add_argument("--max-events-per-root-file", type=int, default=None, help="Limit events per ROOT shard when creating a smoke cache.")
+    parser.add_argument("--shard-cache-size", type=int, default=1, help="Number of recently loaded processed shards retained in RAM.")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument(
         "--run-name",
@@ -108,7 +134,19 @@ def parse_args():
         action="store_true",
         help="Disable inverse-frequency weights for hit-origin and event-count CE losses.",
     )
-    parser.add_argument("--keep-noise", action="store_true")
+    parser.add_argument(
+        "--keep-noise",
+        action="store_true",
+        help="Unsupported for slot training; use --supervise-noise for explicit background labels.",
+    )
+    parser.add_argument(
+        "--supervise-noise",
+        action="store_true",
+        help=(
+            "Advanced-model ROOT experiment only: retain noise_flag hits and assign "
+            "them to background class 0 with background-only fraction targets."
+        ),
+    )
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument(
         "--num-ecal-plots",
@@ -133,211 +171,69 @@ def parse_args():
     return args
 
 
-def resolve_path(path: Path) -> Path:
-    if path.exists():
-        return path
-    for root in (PROJECT_ROOT, PROJECT_ROOT.parent, Path.cwd()):
-        candidate = root / path
-        if candidate.exists():
-            return candidate
-    return path
-
-
-def has_processed_events(processed_dir: Path) -> bool:
-    return processed_dir.exists() and any(processed_dir.glob("event_*.pt"))
-
-
-def load_processed_events(args, processed_dir: Path, logger):
-    dataset = ECalTriggerPadTensorDataset(processed_dir)
-    limit = len(dataset) if args.max_events is None else min(args.max_events, len(dataset))
-    events = []
-    event_sources = []
-    for dataset_idx in range(limit):
-        event = dict(dataset[dataset_idx])
-        event_file = dataset.event_files[dataset_idx]
-        if "event_idx" not in event:
-            event["event_idx"] = torch.tensor(dataset_idx, dtype=torch.long)
-        event["source_file"] = event_file.name
-        events.append(event)
-        event_sources.append(
-            {
-                "event_idx": dataset_idx,
-                "file": event_file.name,
-                "entry": dataset_idx,
-                "source": "processed",
-            }
-        )
-    logger.info("Loaded %s processed tensor events from %s", len(events), processed_dir)
-    return events, event_sources, processed_dir, []
-
-
-def attach_root_source_metadata(event, source, global_event_idx: int, electron_count: int, source_label: str):
-    event["event_idx"] = torch.tensor(global_event_idx, dtype=torch.long)
-    event["electron_count"] = torch.tensor(electron_count, dtype=torch.long)
-    event["source_label"] = source_label
-    event["source_file"] = source["file"]
-    event["source_entry"] = int(source["entry"])
-
-
-def apply_variable_slot_target_mode(event: dict, valid_labels, target_mode: str, max_electrons: int):
-    axis = canonical_axis_from_target_mode(target_mode)
-    if axis is None:
-        event["target_class_names"] = [f"origin {label}" for label in valid_labels]
-        event["target_label_order"] = list(valid_labels)
-        return event
-
-    if "physical_y" not in event or "ecal_pos" not in event:
-        raise KeyError("Canonical slot target mode requires event['physical_y'] and event['ecal_pos'].")
-
-    original_physical_y = event.get("origin_id_y", event["physical_y"]).clone()
-    pos = event["ecal_pos"]
-    present_labels = sorted({int(label) for label in original_physical_y.tolist()})
-    if len(present_labels) > max_electrons:
-        raise ValueError(
-            f"Event has {len(present_labels)} origin labels, but max_electrons={max_electrons}."
-        )
-
-    label_means = []
-    for label in present_labels:
-        mask = original_physical_y == label
-        label_means.append((label, float(pos[mask, axis].mean().item())))
-    ordered_labels = [label for label, _mean in sorted(label_means, key=lambda item: (item[1], item[0]))]
-    label_to_slot = {label: slot_idx + 1 for slot_idx, label in enumerate(ordered_labels)}
-
-    event["origin_id_y"] = original_physical_y
-    event["y"] = torch.tensor(
-        [label_to_slot[int(label)] - 1 for label in original_physical_y.tolist()],
-        dtype=torch.long,
-    )
-    event["physical_y"] = event["y"] + 1
-    event["target_label_order"] = ordered_labels
-
-    if "fraction_target" in event:
-        original_fraction = event.get("origin_id_fraction_target", event["fraction_target"]).clone()
-        event["origin_id_fraction_target"] = original_fraction
-        if original_fraction.shape[1] == max_electrons + 1:
-            original_fraction = original_fraction[:, 1:]
-        if original_fraction.shape[1] != len(valid_labels):
-            raise ValueError(
-                f"Expected {len(valid_labels)} physical-origin fraction columns before canonicalization, "
-                f"got {original_fraction.shape[1]}."
-            )
-        physical_label_to_column = {label: idx for idx, label in enumerate(valid_labels)}
-        canonical_fraction = torch.zeros(
-            (original_fraction.shape[0], max_electrons),
-            dtype=original_fraction.dtype,
-            device=original_fraction.device,
-        )
-        for slot_idx, label in enumerate(ordered_labels):
-            source_col = physical_label_to_column.get(int(label))
-            if source_col is not None:
-                canonical_fraction[:, slot_idx] = original_fraction[:, source_col]
-        event["fraction_target"] = canonical_fraction
-
-    axis_name = {0: "x", 1: "y", 2: "z"}[axis]
-    event["target_class_names"] = [
-        f"slot {slot_idx + 1}: {axis_name}-rank {slot_idx + 1}"
-        for slot_idx in range(max_electrons)
-    ]
-    return event
-
-
-def apply_target_mode_to_events(events, args):
-    for event in events:
-        apply_variable_slot_target_mode(
-            event,
-            valid_labels=tuple(args.valid_labels),
-            target_mode=args.target_mode,
-            max_electrons=args.max_electrons,
-        )
-
-
-def load_balanced_root_events(args, data_root: Path, logger):
+def load_events(args, logger):
+    data_root = resolve_existing_path(args.data_root, project_root=PROJECT_ROOT)
     root_specs = [
         (2, "2e", data_root / "2e/events"),
         (3, "3e", data_root / "3e/events"),
     ]
-    filter_noise = not args.keep_noise
     read_step_size = args.read_step_size if args.read_step_size > 0 else None
-    events = []
-    event_sources = []
-    root_files_used = []
-
-    for electron_count, source_label, data_dir in root_specs:
-        if not data_dir.exists():
-            raise FileNotFoundError(f"Could not find {source_label} ROOT directory: {data_dir}")
-        root_files = find_root_files(data_dir)
-        root_files_used.extend(root_files)
+    if args.processed_cache is not None:
+        processed_cache = args.processed_cache
+        if not processed_cache.is_absolute():
+            processed_cache = PROJECT_ROOT / processed_cache
         logger.info(
-            "Loading up to %s %s events from %s",
-            args.events_per_class,
-            source_label,
-            data_dir,
+            "Sharded cache mode selected; --events-per-class applies only to the legacy ROOT path. "
+            "The cache represents its selected ROOT files."
         )
-        loaded_events, sources = load_ecal_tpad_tensor_events(
-            root_files=root_files,
-            max_events=args.events_per_class,
+        return load_or_create_sharded_tensor_events(
+            processed_cache=processed_cache,
+            root_specs=root_specs,
             valid_labels=tuple(args.valid_labels),
-            target_mode="physical-origin",
-            filter_noise=filter_noise,
+            max_events=args.max_events,
+            filter_noise=False,
+            supervise_noise=True,
+            force=args.force_sharded_cache,
+            max_root_files=args.max_cache_root_files,
+            max_events_per_root_file=args.max_events_per_root_file,
+            shard_cache_size=args.shard_cache_size,
+            allow_incomplete_cache=args.allow_incomplete_sharded_cache,
+            logger=logger,
+            read_step_size=read_step_size,
+        )
+    processed_dir = resolve_existing_path(args.processed_dir, project_root=PROJECT_ROOT)
+    if args.supervise_noise:
+        logger.info("Explicit noise supervision selected; bypassing processed tensors and reading ROOT inputs.")
+        events, event_sources, root_files = load_grouped_root_tensor_events(
+            root_specs=root_specs,
+            events_per_source=args.events_per_class,
+            valid_labels=tuple(args.valid_labels),
+            filter_noise=False,
+            supervise_noise=True,
             allow_fewer_events=args.allow_fewer_events,
-            data_dir=data_dir,
             logger=logger,
             progress_factory=make_progress,
             disable_progress=args.no_progress,
             event_log_every=args.event_log_every,
             read_step_size=read_step_size,
         )
-        for event, source in zip(loaded_events, sources):
-            global_event_idx = len(events)
-            attach_root_source_metadata(
-                event,
-                source,
-                global_event_idx=global_event_idx,
-                electron_count=electron_count,
-                source_label=source_label,
-            )
-            source = {
-                **source,
-                "event_idx": global_event_idx,
-                "electron_count": electron_count,
-                "source_label": source_label,
-                "source_dir": str(data_dir),
-            }
-            events.append(event)
-            event_sources.append(source)
-
-    return events, event_sources, data_root, root_files_used
-
-
-def load_events(args, logger):
-    processed_dir = resolve_path(args.processed_dir)
-    if has_processed_events(processed_dir):
-        logger.info("Using processed tensor dataset: %s", processed_dir)
-        return load_processed_events(args, processed_dir, logger)
-
-    data_root = resolve_path(args.data_root)
-    logger.info(
-        "Processed dir %s not found or empty; loading balanced ROOT events from %s",
-        processed_dir,
-        data_root,
+        return events, event_sources, data_root, root_files
+    return load_processed_or_grouped_root_tensor_events(
+        processed_dir=processed_dir,
+        root_specs=root_specs,
+        root_data_dir=data_root,
+        events_per_source=args.events_per_class,
+        max_processed_events=args.max_events,
+        valid_labels=tuple(args.valid_labels),
+        filter_noise=not args.keep_noise,
+        supervise_noise=False,
+        allow_fewer_events=args.allow_fewer_events,
+        logger=logger,
+        progress_factory=make_progress,
+        disable_progress=args.no_progress,
+        event_log_every=args.event_log_every,
+        read_step_size=read_step_size,
     )
-    return load_balanced_root_events(args, data_root, logger)
-
-
-def resolve_requested_device(requested_device: str, logger):
-    if requested_device == "cuda":
-        if torch.cuda.is_available():
-            logger.info("CUDA GPU: %s", torch.cuda.get_device_name(0))
-            return torch.device("cuda")
-        logger.warning("CUDA was requested but is not available; falling back to CPU.")
-        return torch.device("cpu")
-    if requested_device == "mps":
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        logger.warning("MPS was requested but is not available; falling back to CPU.")
-        return torch.device("cpu")
-    return torch.device("cpu")
 
 
 def make_scheduler(optimizer, args):
@@ -368,6 +264,10 @@ def validate_args(args):
         raise ValueError("--events-per-class must be positive.")
     if args.max_events is not None and args.max_events <= 0:
         raise ValueError("--max-events must be positive when provided.")
+    for name in ("max_cache_root_files", "max_events_per_root_file", "shard_cache_size"):
+        value = getattr(args, name)
+        if value is not None and value <= 0:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive when provided.")
     if args.epochs <= 0:
         raise ValueError("--epochs must be positive.")
     if args.batch_size <= 0:
@@ -380,11 +280,55 @@ def validate_args(args):
         raise ValueError("--max-electrons must be at least 3 for current 2e/3e data.")
     if args.hidden_dim % args.num_heads != 0:
         raise ValueError("--hidden-dim must be divisible by --num-heads.")
+    if args.keep_noise:
+        raise ValueError(
+            "--keep-noise does not define slot-model background labels; "
+            "use --supervise-noise for the explicit advanced-model experiment."
+        )
+    if args.supervise_noise and args.target_mode != "canonical-y":
+        raise ValueError("--supervise-noise currently requires --target-mode canonical-y.")
     valid_labels = tuple(args.valid_labels)
     if len(valid_labels) < 2:
         raise ValueError(f"--valid-labels must contain at least two labels, got {valid_labels}.")
     if len(set(valid_labels)) != len(valid_labels):
         raise ValueError(f"--valid-labels contains duplicates: {valid_labels}.")
+
+
+def prepare_targets_and_features(events, splits, args, logger):
+    if isinstance(events, ShardedECalTpadDataset):
+        def target_transform(event):
+            if not args.supervise_noise:
+                event = filter_noise_tensor_event(event)
+            return apply_variable_count_target_mode(
+                event,
+                valid_labels=tuple(args.valid_labels),
+                target_mode=args.target_mode,
+                max_electrons=args.max_electrons,
+            )
+
+        events.set_event_transform(target_transform)
+        feature_norm = None
+        if not args.no_normalize_features:
+            feature_norm = fit_continuous_feature_normalization(events, splits["train"])
+
+            def target_and_feature_transform(event):
+                return normalize_event_continuous_features(target_transform(event), feature_norm)
+
+            events.set_event_transform(target_and_feature_transform)
+            logger.info("Fitted lazy canonical-event feature normalization from sharded training events.")
+        return feature_norm
+
+    apply_variable_count_target_mode_to_events(
+        events,
+        valid_labels=tuple(args.valid_labels),
+        target_mode=args.target_mode,
+        max_electrons=args.max_electrons,
+    )
+    if not args.no_normalize_features:
+        feature_norm = normalize_continuous_features(events, splits["train"])
+        logger.info("Normalized continuous feature columns from training split statistics.")
+        return feature_norm
+    return None
 
 
 def inverse_frequency_weights(counts: dict[int, int], num_classes: int):
@@ -409,7 +353,12 @@ def add_class_weights_from_training_split(args, events, train_indices, logger):
 
     origin_counts = Counter()
     count_counts = Counter()
-    for idx in train_indices:
+    ordered_indices = (
+        events.order_indices_for_access(train_indices)
+        if hasattr(events, "order_indices_for_access")
+        else train_indices
+    )
+    for idx in ordered_indices:
         event = events[idx]
         origin_counts.update(int(label) for label in event["physical_y"].tolist())
         if "electron_count" in event:
@@ -481,18 +430,14 @@ def plot_test_ecal_hit_classes(model, events, test_indices, args, device, run_di
             true_labels = event["y"].detach().cpu() + 1
         pos = event["ecal_pos"].detach().cpu()
 
-        plot_ecal_hit_classes_3d(
+        plot_ecal_truth_prediction_pair(
             pos,
             true_labels,
-            run_dir / f"test_ecal_event_{event_idx:04d}_truth.png",
-            f"Test event {event_idx} ECal hits, true origin class",
-            labels=labels,
-        )
-        plot_ecal_hit_classes_3d(
-            pos,
             pred_labels,
-            run_dir / f"test_ecal_event_{event_idx:04d}_predicted.png",
-            f"Test event {event_idx} ECal hits, predicted origin class",
+            truth_path=run_dir / f"test_ecal_event_{event_idx:04d}_truth.png",
+            predicted_path=run_dir / f"test_ecal_event_{event_idx:04d}_predicted.png",
+            truth_title=f"Test event {event_idx} ECal hits, true origin class",
+            predicted_title=f"Test event {event_idx} ECal hits, predicted origin class",
             labels=labels,
         )
 
@@ -506,9 +451,14 @@ def main():
 
     logger.info("Output directory: %s", run_dir)
     logger.info("CUDA available: %s", torch.cuda.is_available())
-    device = resolve_requested_device(args.device, logger)
+    device = resolve_device(args.device, logger)
     logger.info("Using device: %s", device)
-    logger.info("Noise handling: %s", "keeping noise hits" if args.keep_noise else "filtering noise hits")
+    if args.supervise_noise:
+        logger.info("Noise handling: retaining stored noise hits with explicit background-class supervision")
+    elif args.keep_noise:
+        logger.info("Noise handling: retaining noise hits without explicit background-class supervision")
+    else:
+        logger.info("Noise handling: filtering noise hits at training access time; background class receives no hit supervision")
 
     events, event_sources, data_dir, root_files = load_events(args, logger)
     if len(events) < 20:
@@ -523,16 +473,14 @@ def main():
         len(splits["test"]),
     )
     logger.info("Target mode: %s", args.target_mode)
-    apply_target_mode_to_events(events, args)
+    feature_norm = prepare_targets_and_features(events, splits, args, logger)
+    if args.supervise_noise:
+        num_noise = sum(int(event["is_noise_target"].sum().item()) for event in events)
+        logger.info("Explicit background targets retained: %s noise ECal hits", num_noise)
     logger.info("Training class counts: %s", count_classes(events, splits["train"]))
     logger.info("Validation class counts: %s", count_classes(events, splits["val"]))
     logger.info("Test class counts: %s", count_classes(events, splits["test"]))
     add_class_weights_from_training_split(args, events, splits["train"], logger)
-
-    feature_norm = None
-    if not args.no_normalize_features:
-        feature_norm = normalize_continuous_features(events, splits["train"])
-        logger.info("Normalized continuous feature columns from training split statistics.")
 
     input_dim = int(events[0]["x"].shape[1])
     model_kwargs = model_kwargs_from_args(args, input_dim=input_dim)

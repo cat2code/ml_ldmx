@@ -19,7 +19,12 @@ def evaluate(model, events, indices, args, device, split_name, collect_predictio
     )
     predictions = []
 
-    for batch in chunks(indices, args.batch_size):
+    ordered_indices = (
+        events.order_indices_for_access(indices)
+        if hasattr(events, "order_indices_for_access")
+        else indices
+    )
+    for batch in chunks(ordered_indices, args.batch_size):
         for event_idx in batch:
             losses = compute_event_losses(model, events[event_idx], device, args)
             update_slot_metric_totals(totals, losses)

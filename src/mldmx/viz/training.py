@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import torch
 
 
-def plot_history(history, run_dir):
+def plot_history(history, run_dir, title_prefix="ECAL/TPAD MLPF-lite"):
     if not history:
         return
     epochs = [row["epoch"] for row in history]
@@ -15,7 +15,7 @@ def plot_history(history, run_dir):
     ax.plot(epochs, [row["val_loss"] for row in history], marker="o", label="validation")
     ax.set_xlabel("epoch")
     ax.set_ylabel("loss")
-    ax.set_title("ECAL/TPAD MLPF-lite loss")
+    ax.set_title(f"{title_prefix} loss")
     ax.grid(True, alpha=0.25)
     ax.legend()
     fig.tight_layout()
@@ -28,7 +28,7 @@ def plot_history(history, run_dir):
     ax.set_xlabel("epoch")
     ax.set_ylabel("accuracy")
     ax.set_ylim(0, 1)
-    ax.set_title("ECAL/TPAD MLPF-lite accuracy")
+    ax.set_title(f"{title_prefix} accuracy")
     ax.grid(True, alpha=0.25)
     ax.legend()
     fig.tight_layout()

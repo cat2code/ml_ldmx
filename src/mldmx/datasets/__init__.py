@@ -6,21 +6,71 @@ from mldmx.datasets.ecal_tpad_dataset import (
 )
 from mldmx.datasets.ecal_tpad_loading import (
     apply_target_mode,
+    apply_variable_count_target_mode,
+    apply_variable_count_target_mode_to_events,
+    attach_root_source_metadata,
     ecal_tpad_event_to_tensors,
+    filter_noise_tensor_event,
+    has_processed_tensor_events,
     load_ecal_tpad_tensor_events,
+    load_grouped_root_tensor_events,
+    load_processed_or_grouped_root_tensor_events,
+    load_processed_tensor_events,
+    load_or_create_sharded_tensor_events,
 )
-from mldmx.datasets.preprocess import normalize_continuous_features
+from mldmx.datasets.ecal_tpad_shards import (
+    ShardedECalTpadDataset,
+    has_sharded_tensor_cache,
+    prepare_sharded_tensor_cache,
+    validate_sharded_cache_request,
+    validate_sharded_tensor_cache,
+)
+from mldmx.datasets.preprocess import (
+    fit_continuous_feature_normalization,
+    normalize_continuous_features,
+    normalize_event_continuous_features,
+)
 from mldmx.datasets.stats import count_classes, target_order_counts
+from mldmx.datasets.model_views import (
+    ecal_gravnet_view,
+    ecal_tpad_gravnet_view,
+    ecal_tpad_slot_model_view,
+    ecal_tpad_transformer_view,
+    ecal_transformer_view,
+    validate_canonical_combined_event,
+)
 
 __all__ = [
     "ECalTriggerPadTensorDataset",
+    "ShardedECalTpadDataset",
     "apply_target_mode",
+    "apply_variable_count_target_mode",
+    "apply_variable_count_target_mode_to_events",
+    "attach_root_source_metadata",
     "count_classes",
+    "ecal_gravnet_view",
     "ecal_tpad_event_to_tensors",
+    "filter_noise_tensor_event",
+    "ecal_tpad_gravnet_view",
+    "ecal_tpad_slot_model_view",
+    "ecal_tpad_transformer_view",
+    "ecal_transformer_view",
+    "has_processed_tensor_events",
     "load_ecal_tpad_tensor_events",
+    "load_grouped_root_tensor_events",
+    "load_processed_or_grouped_root_tensor_events",
+    "load_processed_tensor_events",
+    "load_or_create_sharded_tensor_events",
+    "has_sharded_tensor_cache",
+    "prepare_sharded_tensor_cache",
+    "validate_sharded_cache_request",
+    "validate_sharded_tensor_cache",
+    "fit_continuous_feature_normalization",
     "normalize_continuous_features",
+    "normalize_event_continuous_features",
     "save_tensor_event",
     "target_order_counts",
     "tensor_event_to_pyg_data",
+    "validate_canonical_combined_event",
     "write_manifest",
 ]

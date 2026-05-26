@@ -62,3 +62,30 @@ def plot_ecal_hit_classes_3d(pos, physical_labels, output_path, title, labels=No
     plt.tight_layout()
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
+
+
+def plot_ecal_truth_prediction_pair(
+    pos,
+    true_labels,
+    predicted_labels,
+    truth_path,
+    predicted_path,
+    truth_title,
+    predicted_title,
+    labels=None,
+):
+    """Save matching truth and predicted ECal class plots for one event."""
+    plot_ecal_hit_classes_3d(
+        pos,
+        true_labels,
+        truth_path,
+        truth_title,
+        labels=labels,
+    )
+    plot_ecal_hit_classes_3d(
+        pos,
+        predicted_labels,
+        predicted_path,
+        predicted_title,
+        labels=labels,
+    )
