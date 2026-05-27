@@ -34,6 +34,12 @@ def parse_args():
     parser.add_argument("--valid-labels", type=int, nargs="+", default=[1, 2, 3])
     parser.add_argument("--max-root-files", type=int, default=None, help="Smoke-only limit applied per source.")
     parser.add_argument("--max-events-per-root-file", type=int, default=None, help="Smoke-only event limit per shard.")
+    parser.add_argument(
+        "--resume-from-root-index",
+        type=int,
+        default=1,
+        help="Trust indexed sources before this 1-based ROOT-file position and resume work here.",
+    )
     parser.add_argument("--read-step-size", type=int, default=500)
     parser.add_argument(
         "--filter-noise",
@@ -41,6 +47,11 @@ def parse_args():
         help="Discard noise hits in the stored shards. By default shards retain explicit noise targets for later training-time policy.",
     )
     parser.add_argument("--skip-existing", action="store_true", help="Reuse already valid shard files while completing missing shards.")
+    parser.add_argument(
+        "--skip-failed-root-files",
+        action="store_true",
+        help="Record ROOT files that cannot be read/tensorized in index.json and continue with later sources.",
+    )
     parser.add_argument("--force", action="store_true", help="Rebuild selected shard files even when a cache exists.")
     return parser.parse_args()
 
@@ -73,6 +84,8 @@ def main():
     args = parse_args()
     if args.read_step_size < 0:
         raise ValueError("--read-step-size must be non-negative.")
+    if args.resume_from_root_index < 1:
+        raise ValueError("--resume-from-root-index must be at least 1.")
     root_specs = root_specs_from_args(args)
     output_dir = resolve_path(args.output_dir)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -94,6 +107,8 @@ def main():
         max_root_files=args.max_root_files,
         max_events_per_root_file=args.max_events_per_root_file,
         read_step_size=read_step_size,
+        skip_failed_root_files=args.skip_failed_root_files,
+        resume_from_root_index=args.resume_from_root_index,
         logger=logger,
     )
     _manifest, index = validate_sharded_tensor_cache(output_dir, load_shards=True)
@@ -103,6 +118,14 @@ def main():
     print("source ROOT files:")
     for shard in index["shards"]:
         print(f"  {Path(shard['source']['path']).name}: {shard['num_events']} event(s) -> {shard['path']}")
+    skipped_sources = index.get("skipped_sources", [])
+    if skipped_sources:
+        print("skipped ROOT files:")
+        for skipped in skipped_sources:
+            print(
+                f"  {Path(skipped['source']['path']).name}: "
+                f"{skipped.get('error_type', 'error')}: {skipped.get('error', '')}"
+            )
 
 
 if __name__ == "__main__":

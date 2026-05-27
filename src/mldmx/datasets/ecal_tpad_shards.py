@@ -135,6 +135,55 @@ def _validate_shard_payload(payload, expected_source):
     return len(events)
 
 
+def _index_payload(shard_entries, skipped_sources, total_events):
+    return {
+        "cache_schema_version": SHARD_CACHE_SCHEMA_VERSION,
+        "num_events": total_events,
+        "shards": shard_entries,
+        "skipped_sources": skipped_sources,
+    }
+
+
+def _resume_prefix_from_index(index_path, root_sources, resume_from_root_index):
+    """Trust already indexed sources before a requested 1-based resume position."""
+    if resume_from_root_index <= 1:
+        return [], [], 0
+    if not index_path.exists():
+        raise ValueError(
+            f"--resume-from-root-index={resume_from_root_index} requires an existing index: {index_path}"
+        )
+
+    prior_index = _load_json(index_path)
+    prefix_sources = root_sources[: resume_from_root_index - 1]
+    prefix_paths = {source["path"] for source in prefix_sources}
+    shard_entries = [
+        entry for entry in prior_index.get("shards", [])
+        if entry.get("source", {}).get("path") in prefix_paths
+    ]
+    skipped_sources = [
+        entry for entry in prior_index.get("skipped_sources", [])
+        if entry.get("source", {}).get("path") in prefix_paths
+    ]
+    indexed_by_path = {entry.get("source", {}).get("path"): entry.get("source") for entry in shard_entries}
+    skipped_by_path = {entry.get("source", {}).get("path"): entry.get("source") for entry in skipped_sources}
+    accounted_sources = [
+        indexed_by_path.get(source["path"], skipped_by_path.get(source["path"]))
+        for source in prefix_sources
+    ]
+    if accounted_sources != prefix_sources:
+        raise ValueError(
+            f"Cannot resume at ROOT index {resume_from_root_index}: existing index does not account "
+            "for every earlier ROOT source."
+        )
+
+    total_events = 0
+    for entry in shard_entries:
+        if entry.get("event_start") != total_events:
+            raise ValueError(f"Cannot resume from non-contiguous shard event offsets in {index_path}")
+        total_events = entry.get("event_stop")
+    return shard_entries, skipped_sources, int(total_events)
+
+
 def prepare_sharded_tensor_cache(
     cache_dir,
     root_specs,
@@ -146,6 +195,8 @@ def prepare_sharded_tensor_cache(
     max_root_files=None,
     max_events_per_root_file=None,
     read_step_size=500,
+    skip_failed_root_files=False,
+    resume_from_root_index=1,
     logger=None,
 ):
     """Create or resume a one-ROOT-file-per-shard canonical tensor cache."""
@@ -155,6 +206,8 @@ def prepare_sharded_tensor_cache(
     )
 
     logger = logger or logging.getLogger(__name__)
+    if resume_from_root_index < 1:
+        raise ValueError("resume_from_root_index must be at least 1.")
     cache_dir = Path(cache_dir)
     shards_dir = cache_dir / "shards"
     root_sources = _root_sources(root_specs, max_root_files=max_root_files)
@@ -189,9 +242,35 @@ def prepare_sharded_tensor_cache(
     }
     _write_json(manifest_path, manifest)
 
-    shard_entries = []
-    total_events = 0
-    for shard_idx, source in enumerate(root_sources, start=1):
+    prior_skipped_by_path = {}
+    if skip_failed_root_files and index_path.exists() and not force:
+        try:
+            prior_index = _load_json(index_path)
+            prior_skipped_by_path = {
+                entry["source"]["path"]: entry
+                for entry in prior_index.get("skipped_sources", [])
+                if isinstance(entry, dict) and isinstance(entry.get("source"), dict)
+            }
+        except Exception:
+            prior_skipped_by_path = {}
+
+    shard_entries, skipped_sources, total_events = _resume_prefix_from_index(
+        index_path,
+        root_sources,
+        resume_from_root_index,
+    )
+    if resume_from_root_index > 1:
+        logger.info(
+            "Fast resume: trusting %s indexed shard(s) and %s recorded skipped ROOT file(s) "
+            "before ROOT index %s without loading shard payloads.",
+            len(shard_entries),
+            len(skipped_sources),
+            resume_from_root_index,
+        )
+    for shard_idx, source in enumerate(
+        root_sources[resume_from_root_index - 1 :],
+        start=resume_from_root_index,
+    ):
         shard_path = shards_dir / f"shard_{shard_idx:06d}.pt"
         num_events = None
         if skip_existing and shard_path.exists() and not force:
@@ -203,29 +282,54 @@ def prepare_sharded_tensor_cache(
                 logger.info("Reusing valid processed shard: %s", shard_path.name)
 
         if num_events is None:
+            prior_skip = prior_skipped_by_path.get(source["path"])
+            if prior_skip is not None and prior_skip.get("source") == source:
+                skipped_sources.append(prior_skip)
+                logger.warning(
+                    "Reusing previously recorded skipped ROOT file: %s (%s: %s)",
+                    source["name"],
+                    prior_skip.get("error_type", "unknown error"),
+                    prior_skip.get("error", "no message"),
+                )
+                _write_json(index_path, _index_payload(shard_entries, skipped_sources, total_events))
+                continue
+
             logger.info("Tensorizing ROOT file into shard: %s -> %s", source["name"], shard_path.name)
             events = []
-            for local_entry, raw_event in iter_ecal_rechits_with_truth_and_triggerpad_context(
-                source["path"],
-                max_events=max_events_per_root_file,
-                step_size=read_step_size,
-            ):
-                event = ecal_tpad_event_to_tensors(
-                    raw_event,
-                    event_idx=total_events + len(events),
-                    valid_labels=tuple(valid_labels),
-                    target_mode="physical-origin",
-                    filter_noise=filter_noise,
-                    supervise_noise=supervise_noise,
-                )
-                attach_root_source_metadata(
-                    event,
-                    {"file": source["name"], "entry": local_entry},
-                    global_event_idx=total_events + len(events),
-                    electron_count=source["electron_count"],
-                    source_label=source["source_label"],
-                )
-                events.append(event)
+            try:
+                for local_entry, raw_event in iter_ecal_rechits_with_truth_and_triggerpad_context(
+                    source["path"],
+                    max_events=max_events_per_root_file,
+                    step_size=read_step_size,
+                ):
+                    event = ecal_tpad_event_to_tensors(
+                        raw_event,
+                        event_idx=total_events + len(events),
+                        valid_labels=tuple(valid_labels),
+                        target_mode="physical-origin",
+                        filter_noise=filter_noise,
+                        supervise_noise=supervise_noise,
+                    )
+                    attach_root_source_metadata(
+                        event,
+                        {"file": source["name"], "entry": local_entry},
+                        global_event_idx=total_events + len(events),
+                        electron_count=source["electron_count"],
+                        source_label=source["source_label"],
+                    )
+                    events.append(event)
+            except Exception as exc:
+                if not skip_failed_root_files:
+                    raise
+                skipped_source = {
+                    "source": source,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+                skipped_sources.append(skipped_source)
+                logger.exception("Skipping failed ROOT file and continuing: %s", source["path"])
+                _write_json(index_path, _index_payload(shard_entries, skipped_sources, total_events))
+                continue
             payload = {
                 "schema_version": SHARD_PAYLOAD_SCHEMA_VERSION,
                 "source": source,
@@ -244,18 +348,16 @@ def prepare_sharded_tensor_cache(
         }
         shard_entries.append(entry)
         total_events += int(num_events)
-        _write_json(
-            index_path,
-            {
-                "cache_schema_version": SHARD_CACHE_SCHEMA_VERSION,
-                "num_events": total_events,
-                "shards": shard_entries,
-            },
-        )
+        _write_json(index_path, _index_payload(shard_entries, skipped_sources, total_events))
 
     if not shard_entries:
         raise ValueError("No ROOT files were selected for sharded preprocessing.")
-    logger.info("Sharded tensor cache ready: %s event(s) in %s shard(s)", total_events, len(shard_entries))
+    logger.info(
+        "Sharded tensor cache ready: %s event(s) in %s shard(s); skipped ROOT files: %s",
+        total_events,
+        len(shard_entries),
+        len(skipped_sources),
+    )
     return cache_dir
 
 
@@ -270,11 +372,26 @@ def validate_sharded_tensor_cache(cache_dir, load_shards=True, allow_incomplete=
     if not entries:
         raise ValueError(f"Sharded cache index contains no shards: {cache_dir}")
     expected_sources = manifest.get("cache_spec", {}).get("root_sources", [])
+    skipped_sources = index.get("skipped_sources", [])
     indexed_sources = [entry.get("source") for entry in entries]
+    skipped_input_sources = [entry.get("source") for entry in skipped_sources]
+    accounted_sources = []
+    indexed_idx = 0
+    skipped_idx = 0
+    for expected_source in expected_sources:
+        if indexed_idx < len(indexed_sources) and indexed_sources[indexed_idx] == expected_source:
+            accounted_sources.append(expected_source)
+            indexed_idx += 1
+        elif skipped_idx < len(skipped_input_sources) and skipped_input_sources[skipped_idx] == expected_source:
+            accounted_sources.append(expected_source)
+            skipped_idx += 1
+        else:
+            break
+    all_index_entries_accounted = indexed_idx == len(indexed_sources) and skipped_idx == len(skipped_input_sources)
     if allow_incomplete:
-        sources_match = indexed_sources == expected_sources[: len(indexed_sources)]
+        sources_match = all_index_entries_accounted
     else:
-        sources_match = indexed_sources == expected_sources
+        sources_match = all_index_entries_accounted and accounted_sources == expected_sources
     if not sources_match:
         raise ValueError(f"Sharded cache index is incomplete or does not match its manifest: {cache_dir}")
 

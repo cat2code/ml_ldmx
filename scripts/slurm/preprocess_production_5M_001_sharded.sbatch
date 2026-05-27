@@ -20,6 +20,9 @@ set -euo pipefail
 #   tail -F tensorize_production_5M_001_JOB_ID.out tensorize_production_5M_001_JOB_ID.err
 #
 # The job is resumable: re-submitting it reuses already completed valid shards.
+# ROOT files that cannot be read/tensorized are recorded in index.json and skipped.
+# To bypass validation of an existing valid prefix, for example after completing
+# 2e shards 1-184, submit with --export=ALL,RESUME_2E_FROM_ROOT_INDEX=185.
 
 WORK_DIR="${WORK_DIR:-/projects/hep/fs9/shared/ldmx/users/eliotmp}"
 REPO_DIR="${REPO_DIR:-${WORK_DIR}/mpetren-msceng-ldmx}"
@@ -27,6 +30,8 @@ DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/mldmx/data/processed/production_5M_001_sharded}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
+RESUME_2E_FROM_ROOT_INDEX="${RESUME_2E_FROM_ROOT_INDEX:-1}"
+RESUME_3E_FROM_ROOT_INDEX="${RESUME_3E_FROM_ROOT_INDEX:-1}"
 
 module purge
 module load GCCcore/13.2.0
@@ -66,16 +71,20 @@ for electron_count in 2 3; do
   label="${electron_count}e"
   input_dir="${DATASET_DIR}/${label}/events"
   output_dir="${OUTPUT_ROOT}/${label}/events"
+  resume_variable="RESUME_${label^^}_FROM_ROOT_INDEX"
+  resume_from_root_index="${!resume_variable}"
 
   echo
-  echo "Tensorizing ${label}: ${input_dir} -> ${output_dir}"
+  echo "Tensorizing ${label} from ROOT index ${resume_from_root_index}: ${input_dir} -> ${output_dir}"
   "${PYTHON_BIN}" -u mldmx/scripts/preprocess_ecal_tpad_sharded.py \
     --input-root-dir "${input_dir}" \
     --electron-count "${electron_count}" \
     --source-label "${label}" \
     --output-dir "${output_dir}" \
+    --resume-from-root-index "${resume_from_root_index}" \
     --read-step-size "${READ_STEP_SIZE}" \
-    --skip-existing
+    --skip-existing \
+    --skip-failed-root-files
 done
 
 echo
