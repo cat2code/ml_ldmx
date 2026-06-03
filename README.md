@@ -311,7 +311,13 @@ sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,RUN
 ```
 
 For the production cache layout, `--events-per-source 500` means 1,000 total
-events across the separate `2e` and `3e` processed shard sources.
+events across the separate `2e` and `3e` processed shard sources. Set
+`SOURCE_LABEL=3e` or `SOURCE_LABEL=2e` to select only one processed source; in
+that mode `EVENTS_PER_SOURCE` is the total number of events used. For example:
+
+```bash
+sbatch --export=ALL,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,RUN_NAME=tpad_gravnet_3e_100k other/cosmos_train_baseline.sbatch
+```
 
 For a minimal ROOT-to-tensor inspection path:
 

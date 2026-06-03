@@ -62,6 +62,13 @@ For the production layout, use `--processed-cache-root` and
 total events = 2 * events_per_source
 ```
 
+For a single-source run, set `SOURCE_LABEL=2e` or `SOURCE_LABEL=3e` in the
+Slurm export. In that mode:
+
+```text
+total events = events_per_source
+```
+
 Use balanced staged counts:
 
 ```text
@@ -92,6 +99,13 @@ sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=5000,EPOCHS=10,R
   other/cosmos_train_baseline.sbatch
 ```
 
+Run a 100,000-event TPAD GravNet job on only `3e` events:
+
+```bash
+sbatch --export=ALL,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,RUN_NAME=tpad_gravnet_3e_100k \
+  other/cosmos_train_baseline.sbatch
+```
+
 Run a 1,000-event advanced slot-model job:
 
 ```bash
@@ -114,7 +128,9 @@ The batch scripts expose the main choices as environment variables:
 ```text
 MODEL                 baseline model name
 PROCESSED_CACHE_ROOT  production shard root
-EVENTS_PER_SOURCE     balanced events per source
+SOURCE_LABEL          optional single source, 2e or 3e
+ELECTRON_COUNT        optional source electron count, inferred from SOURCE_LABEL
+EVENTS_PER_SOURCE     events per selected source
 EPOCHS                number of epochs
 BATCH_SIZE            events per optimizer step
 LR                    learning rate
