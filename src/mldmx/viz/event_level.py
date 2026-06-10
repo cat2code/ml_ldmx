@@ -4,17 +4,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 
+from mldmx.train.metrics import confusion_matrix_from_labels
+
 
 def _confusion_from_labels(y_true, y_pred, labels):
-    label_to_index = {int(label): idx for idx, label in enumerate(labels)}
-    confusion = torch.zeros((len(labels), len(labels)), dtype=torch.long)
-    for true_value, pred_value in zip(y_true, y_pred):
-        true_idx = label_to_index.get(int(true_value))
-        pred_idx = label_to_index.get(int(pred_value))
-        if true_idx is None or pred_idx is None:
-            continue
-        confusion[true_idx, pred_idx] += 1
-    return confusion
+    return confusion_matrix_from_labels(y_true, y_pred, labels).cpu()
 
 
 def plot_event_count_confusion_matrix(
@@ -41,7 +35,7 @@ def plot_event_count_confusion_matrix(
         vmin, vmax = None, None
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    image = ax.imshow(image_values.numpy(), cmap="Blues", vmin=vmin, vmax=vmax)
+    image = ax.imshow(image_values.numpy(), cmap="Blues", vmin=vmin, vmax=vmax, origin="lower")
     ax.set_title(title)
     ax.set_xlabel("predicted count")
     ax.set_ylabel("true count")

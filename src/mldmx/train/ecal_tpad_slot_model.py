@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 from mldmx.train.batching import chunks
 from mldmx.train.losses import soft_label_cross_entropy
+from mldmx.train.metrics import confusion_matrix_from_class_indices
 from mldmx.train.progress import make_progress
 
 
@@ -206,20 +207,33 @@ def empty_slot_metric_totals(num_hit_classes: int, num_count_classes: int):
 
 def update_slot_metric_totals(totals: dict, losses: dict):
     num_hits = int(losses["num_hits"])
-    totals["loss_sum"] += float(losses["total_loss"].detach().cpu().item())
-    totals["origin_loss_sum"] += float(losses["origin_loss"].detach().cpu().item())
-    totals["fraction_loss_sum"] += float(losses["fraction_loss"].detach().cpu().item())
-    totals["slot_loss_sum"] += float(losses["slot_loss"].detach().cpu().item())
-    totals["count_loss_sum"] += float(losses["count_loss"].detach().cpu().item())
-    totals["fraction_mse_sum"] += float(losses["fraction_mse"].detach().cpu().item()) * num_hits
-    totals["fraction_mae_sum"] += float(losses["fraction_mae"].detach().cpu().item()) * num_hits
+    loss_values = torch.stack(
+        [
+            losses["total_loss"],
+            losses["origin_loss"],
+            losses["fraction_loss"],
+            losses["slot_loss"],
+            losses["count_loss"],
+            losses["fraction_mse"],
+            losses["fraction_mae"],
+        ]
+    ).detach().cpu()
+    totals["loss_sum"] += float(loss_values[0].item())
+    totals["origin_loss_sum"] += float(loss_values[1].item())
+    totals["fraction_loss_sum"] += float(loss_values[2].item())
+    totals["slot_loss_sum"] += float(loss_values[3].item())
+    totals["count_loss_sum"] += float(loss_values[4].item())
+    totals["fraction_mse_sum"] += float(loss_values[5].item()) * num_hits
+    totals["fraction_mae_sum"] += float(loss_values[6].item()) * num_hits
 
-    pred = losses["pred_class"].detach().cpu()
-    true = losses["true_class"].detach().cpu()
-    totals["correct_hits"] += int((pred == true).sum().item())
+    hit_confusion = confusion_matrix_from_class_indices(
+        losses["true_class"],
+        losses["pred_class"],
+        totals["hit_confusion"].shape[0],
+    ).cpu()
+    totals["correct_hits"] += int(hit_confusion.diag().sum().item())
     totals["hits"] += num_hits
-    for true_idx, pred_idx in zip(true.tolist(), pred.tolist()):
-        totals["hit_confusion"][int(true_idx), int(pred_idx)] += 1
+    totals["hit_confusion"] += hit_confusion
 
     slot_pred = losses["slot_pred"].detach().cpu()
     slot_true = losses["slot_target"].detach().cpu().to(dtype=torch.bool)
@@ -227,16 +241,26 @@ def update_slot_metric_totals(totals: dict, losses: dict):
     totals["slot_total"] += int(slot_true.numel())
     totals["slot_exact_correct"] += int(bool((slot_pred == slot_true).all().item()))
 
-    count_true = int(losses["count_target"].detach().cpu().item())
-    count_pred = int(losses["count_pred"].detach().cpu().item())
-    slot_count_pred = int(losses["slot_count_pred"].detach().cpu().item())
+    count_pair = torch.stack(
+        [
+            losses["count_target"].reshape(()),
+            losses["count_pred"].reshape(()),
+        ]
+    ).detach().cpu().to(dtype=torch.long)
+    count_true = int(count_pair[0].item())
+    count_pred = int(count_pair[1].item())
+    slot_count_pred = int(slot_pred.to(dtype=torch.long).sum().item())
     totals["count_correct"] += int(count_pred == count_true)
     totals["slot_count_correct"] += int(slot_count_pred == count_true)
     totals["count_total_by_true"][count_true] = totals["count_total_by_true"].get(count_true, 0) + 1
     totals["count_correct_by_true"][count_true] = totals["count_correct_by_true"].get(count_true, 0) + int(
         count_pred == count_true
     )
-    totals["count_confusion"][count_true, count_pred] += 1
+    totals["count_confusion"] += confusion_matrix_from_class_indices(
+        count_pair[:1],
+        count_pair[1:],
+        totals["count_confusion"].shape[0],
+    ).cpu()
     totals["events"] += 1
 
 

@@ -42,7 +42,7 @@ def plot_confusion_matrix(confusion, valid_labels, output_path, title):
     normalized = confusion / row_sums
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    image = ax.imshow(normalized.numpy(), vmin=0, vmax=1, cmap="Blues")
+    image = ax.imshow(normalized.numpy(), vmin=0, vmax=1, cmap="Blues", origin="lower")
     ax.set_title(title)
     ax.set_xlabel("predicted class")
     ax.set_ylabel("true class")

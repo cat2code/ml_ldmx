@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from mldmx.train.batching import chunks
+from mldmx.train.metrics import confusion_matrix_from_class_indices
 from mldmx.train.progress import make_progress
 
 
@@ -46,12 +47,14 @@ def empty_metric_totals(num_classes):
 def update_metric_totals(totals, losses):
     num_hits = int(losses["num_hits"])
     totals["loss_sum"] += float(losses["total_loss"].detach().cpu().item()) * num_hits
-    pred = losses["pred_class"].detach().cpu()
-    true = losses["true_class"].detach().cpu()
-    totals["correct"] += int((pred == true).sum().item())
+    confusion = confusion_matrix_from_class_indices(
+        losses["true_class"],
+        losses["pred_class"],
+        totals["confusion"].shape[0],
+    ).cpu()
+    totals["correct"] += int(confusion.diag().sum().item())
     totals["hits"] += num_hits
-    for true_idx, pred_idx in zip(true.tolist(), pred.tolist()):
-        totals["confusion"][int(true_idx), int(pred_idx)] += 1
+    totals["confusion"] += confusion
 
 
 def finalize_metrics(totals, prefix=""):
