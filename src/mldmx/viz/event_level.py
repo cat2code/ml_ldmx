@@ -35,7 +35,7 @@ def plot_event_count_confusion_matrix(
         vmin, vmax = None, None
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    image = ax.imshow(image_values.numpy(), cmap="Blues", vmin=vmin, vmax=vmax, origin="lower")
+    image = ax.imshow(image_values.numpy(), cmap="Blues", vmin=vmin, vmax=vmax, origin="upper")
     ax.set_title(title)
     ax.set_xlabel("predicted count")
     ax.set_ylabel("true count")

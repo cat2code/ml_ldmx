@@ -1,6 +1,7 @@
 """Train one maintained ECal hit-origin classification baseline."""
 
 import argparse
+import csv
 import json
 import sys
 import time
@@ -36,7 +37,7 @@ from mldmx.datasets.preprocess import (
     normalize_event_continuous_features,
 )
 from mldmx.datasets.stats import count_classes, target_order_counts
-from mldmx.eval.hit_classifier_baseline import evaluate
+from mldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
 from mldmx.io.artifacts import save_config, save_history, save_json
 from mldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
 from mldmx.train.checkpoints import load_checkpoint, save_checkpoint
@@ -53,7 +54,7 @@ from mldmx.train.run_overview import (
 from mldmx.train.splits import deterministic_split
 from mldmx.train.utils import resolve_device
 from mldmx.viz.ecal import plot_ecal_hit_prediction_errors_3d
-from mldmx.viz.training import plot_confusion_matrix, plot_history
+from mldmx.viz.training import plot_confusion_matrix, plot_event_accuracy_overview, plot_history
 
 
 MODEL_NAMES = ("ECalGravNet", "ECalTpadGravNet", "ECalTransformer", "ECalTpadTransformer")
@@ -510,6 +511,61 @@ def prepare_training_views(events, view_fn, args, logger):
     )
 
 
+def save_event_accuracy_records(records, run_dir, split_name):
+    json_path = run_dir / f"{split_name}_event_accuracy.json"
+    csv_path = run_dir / f"{split_name}_event_accuracy.csv"
+    save_json(json_path, records)
+    fieldnames = [
+        "split_position",
+        "event_idx",
+        "num_hits",
+        "correct_hits",
+        "incorrect_hits",
+        "accuracy",
+        "loss",
+        "source_file",
+        "source_entry",
+        "source_label",
+        "electron_count",
+        "target_label_order",
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in records:
+            row = record.copy()
+            if isinstance(row.get("target_label_order"), list):
+                row["target_label_order"] = json.dumps(row["target_label_order"])
+            writer.writerow({key: row.get(key) for key in fieldnames})
+    return {"json": json_path, "csv": csv_path}
+
+
+def log_worst_event_accuracies(logger, records, split_name, limit=8):
+    valid_records = [record for record in records if record.get("accuracy") is not None]
+    if not valid_records:
+        logger.info("No %s event-accuracy records were available.", split_name)
+        return
+    worst = sorted(
+        valid_records,
+        key=lambda record: (
+            float(record["accuracy"]),
+            -int(record.get("incorrect_hits", 0)),
+            int(record["event_idx"]),
+        ),
+    )[:limit]
+    summary = [
+        (
+            record["event_idx"],
+            record["accuracy"],
+            record["incorrect_hits"],
+            record["num_hits"],
+            record.get("source_file"),
+        )
+        for record in worst
+    ]
+    logger.info("Lowest %s event accuracies: %s", split_name, summary)
+
+
 @torch.no_grad()
 def plot_test_predictions(model, events_or_views, test_indices, view_fn, args, device, run_dir):
     model.eval()
@@ -716,6 +772,28 @@ def main():
             val_metrics["val_loss"],
             val_metrics["val_accuracy"],
         )
+
+    val_event_records = collect_event_metrics(
+        model,
+        training_events,
+        splits["val"],
+        training_view_fn,
+        args,
+        device,
+    )
+    val_event_paths = save_event_accuracy_records(val_event_records, run_dir, "val")
+    plot_event_accuracy_overview(
+        val_event_records,
+        run_dir / "val_event_accuracy_overview.png",
+        f"{args.model} validation event hit accuracy",
+    )
+    logger.info(
+        "Saved validation event-accuracy diagnostics: %s, %s, %s",
+        val_event_paths["json"],
+        val_event_paths["csv"],
+        run_dir / "val_event_accuracy_overview.png",
+    )
+    log_worst_event_accuracies(logger, val_event_records, "validation")
 
     test_metrics = evaluate(
         model,

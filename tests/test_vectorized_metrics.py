@@ -22,6 +22,7 @@ from mldmx.train.ecal_tpad_slot_model import (
     update_slot_metric_totals,
 )
 from mldmx.viz.event_level import _confusion_from_labels, plot_event_count_confusion_matrix
+from mldmx.viz.training import plot_confusion_matrix
 
 
 def _old_baseline_update(totals, losses):
@@ -225,13 +226,29 @@ class VectorizedMetricsTest(unittest.TestCase):
         self.assertTrue(torch.equal(old_totals["count_confusion"], new_totals["count_confusion"]))
         self.assertEqual(finalize_slot_metrics(old_totals), finalize_slot_metrics(new_totals))
 
-    def test_event_count_confusion_plot_uses_lower_origin(self):
+    def test_hit_confusion_plot_uses_upper_origin(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+
+        with TemporaryDirectory() as temporary_dir:
+            output_path = Path(temporary_dir) / "confusion.png"
+            fig, ax = plot_confusion_matrix(
+                confusion=[[3, 0, 0], [0, 2, 0], [0, 0, 1]],
+                valid_labels=[1, 2, 3],
+                output_path=output_path,
+                title="hit confusion",
+            )
+            self.assertTrue(output_path.exists())
+            self.assertEqual(ax.images[0].origin, "upper")
+            fig.clear()
+
+    def test_event_count_confusion_plot_uses_upper_origin(self):
         fig, ax = plot_event_count_confusion_matrix(
             y_true=[1, 2, 3],
             y_pred=[1, 2, 3],
             labels=[1, 2, 3],
         )
-        self.assertEqual(ax.images[0].origin, "lower")
+        self.assertEqual(ax.images[0].origin, "upper")
         fig.clear()
 
 
