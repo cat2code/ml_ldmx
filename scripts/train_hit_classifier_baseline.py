@@ -44,9 +44,14 @@ from mldmx.train.logging import setup_logging
 from mldmx.train.modeling import count_trainable_parameters
 from mldmx.train.paths import resolve_existing_path, resolve_run_dir
 from mldmx.train.progress import make_progress
+from mldmx.train.run_overview import (
+    build_run_overview,
+    log_run_overview,
+    save_run_overview,
+)
 from mldmx.train.splits import deterministic_split
 from mldmx.train.utils import resolve_device
-from mldmx.viz.ecal import plot_ecal_truth_prediction_pair
+from mldmx.viz.ecal import plot_ecal_hit_prediction_errors_3d
 from mldmx.viz.training import plot_confusion_matrix, plot_history
 
 
@@ -381,19 +386,24 @@ def model_kwargs_from_args(args, input_dim):
 @torch.no_grad()
 def plot_test_predictions(model, events_or_views, test_indices, view_fn, args, device, run_dir):
     model.eval()
-    labels = list(range(len(args.valid_labels)))
     for event_idx in test_indices[: args.num_ecal_plots]:
         losses = compute_event_losses(model, events_or_views[event_idx], view_fn, device)
         view = losses["view"]
-        plot_ecal_truth_prediction_pair(
+        color_labels = view.get("origin_id_y", losses["true_class"]).detach().cpu()
+        labels = (
+            list(args.valid_labels)
+            if "origin_id_y" in view
+            else list(range(len(args.valid_labels)))
+        )
+        plot_ecal_hit_prediction_errors_3d(
             view["ecal_pos"].detach().cpu(),
             losses["true_class"].detach().cpu(),
             losses["pred_class"].detach().cpu(),
-            truth_path=run_dir / f"test_ecal_event_{event_idx:04d}_truth.png",
-            predicted_path=run_dir / f"test_ecal_event_{event_idx:04d}_predicted.png",
-            truth_title=f"{args.model} test event {event_idx}, canonical-y truth",
-            predicted_title=f"{args.model} test event {event_idx}, canonical-y prediction",
+            output_path=run_dir / f"test_ecal_event_{event_idx:04d}_prediction_errors.png",
+            title=f"{args.model} test event {event_idx}, canonical-y hit prediction errors",
             labels=labels,
+            color_labels=color_labels,
+            legend_title="true origin_id / marker",
         )
 
 
@@ -419,7 +429,11 @@ def main():
         len(splits["test"]),
     )
     feature_norm = prepare_targets_and_features(events, splits, args, logger)
-    logger.info("Training canonical class counts: %s", count_classes(events, splits["train"]))
+    class_counts_by_split = {
+        name: count_classes(events, indices)
+        for name, indices in splits.items()
+    }
+    logger.info("Training canonical class counts: %s", class_counts_by_split["train"])
 
     prototype_view = {
         "ECalGravNet": ecal_gravnet_view,
@@ -462,6 +476,10 @@ def main():
         best_val_loss = checkpoint.get("best_val_loss", float("inf"))
         start_epoch = int(checkpoint["epoch"]) + 1
 
+    target_order_counts_by_split = {
+        name: target_order_counts(events, indices)
+        for name, indices in splits.items()
+    }
     save_config(
         args,
         run_dir,
@@ -469,8 +487,30 @@ def main():
         root_files,
         event_sources,
         splits,
-        {name: target_order_counts(events, indices) for name, indices in splits.items()},
+        target_order_counts_by_split,
     )
+    run_overview = build_run_overview(
+        args=args,
+        run_dir=run_dir,
+        model=model,
+        model_kwargs=model_kwargs,
+        input_dim=input_dim,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device,
+        feature_norm=feature_norm,
+        data_dir=data_dir,
+        event_sources=event_sources,
+        splits=splits,
+        class_counts_by_split=class_counts_by_split,
+        target_order_counts_by_split=target_order_counts_by_split,
+        view_fn=view_fn,
+        training_view_fn=training_view_fn,
+        start_epoch=start_epoch,
+        best_val_loss=best_val_loss,
+    )
+    run_overview_paths = save_run_overview(run_dir, run_overview)
+    log_run_overview(logger, run_overview, run_overview_paths)
     save_history(history, run_dir)
 
     for epoch in range(start_epoch, args.epochs):

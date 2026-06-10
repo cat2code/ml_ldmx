@@ -1,0 +1,1 @@
+* Rule for scripts: Make sure every sript in this directory has a comment description in the start of how to run the script and also what the purpose of the script is and also what it does. 
