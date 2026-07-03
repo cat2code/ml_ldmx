@@ -9,8 +9,8 @@ import sys
 
 import torch
 
-from mldmx.io.artifacts import save_json
-from mldmx.io.root_files import root_file_sort_key
+from ml_ldmx.io.artifacts import save_json
+from ml_ldmx.io.root_files import root_file_sort_key
 
 
 def _jsonable(value):

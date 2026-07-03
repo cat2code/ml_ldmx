@@ -3,12 +3,12 @@ from pathlib import Path
 
 import torch
 
-from mldmx.datasets.tensorize import (
+from ml_ldmx.datasets.tensorize import (
     origin_energy_fraction_targets,
     tensorize_ecal_with_triggerpad_context,
 )
-from mldmx.datasets.ecal_tpad_dataset import ECalTriggerPadTensorDataset
-from mldmx.datasets.ecal_tpad_shards import (
+from ml_ldmx.datasets.ecal_tpad_dataset import ECalTriggerPadTensorDataset
+from ml_ldmx.datasets.ecal_tpad_shards import (
     MultiShardedECalTpadDataset,
     ShardedECalTpadDataset,
     has_sharded_tensor_cache,
@@ -16,8 +16,8 @@ from mldmx.datasets.ecal_tpad_shards import (
     validate_sharded_cache_request,
     validate_sharded_tensor_cache,
 )
-from mldmx.io.root_files import find_root_files
-from mldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
+from ml_ldmx.io.root_files import find_root_files
+from ml_ldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
 
 
 def canonical_axis_from_target_mode(target_mode):
@@ -458,7 +458,7 @@ def load_ecal_tpad_tensor_events(
     """
     Load labelled ECal + TriggerPadTracks ROOT events and tensorize them.
 
-    The ROOT-specific work stays in mldmx.io.root_reader; this function owns the
+    The ROOT-specific work stays in ml_ldmx.io.root_reader; this function owns the
     reusable dataset-level policy: walk files, assign global event indices,
     tensorize events, and record provenance for configs/manifests.
     """

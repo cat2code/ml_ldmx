@@ -1,11 +1,11 @@
-from mldmx.datasets.cached_views import CachedEventViewDataset
-from mldmx.datasets.ecal_tpad_dataset import (
+from ml_ldmx.datasets.cached_views import CachedEventViewDataset
+from ml_ldmx.datasets.ecal_tpad_dataset import (
     ECalTriggerPadTensorDataset,
     save_tensor_event,
     tensor_event_to_pyg_data,
     write_manifest,
 )
-from mldmx.datasets.ecal_tpad_loading import (
+from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_target_mode,
     apply_variable_count_target_mode,
     apply_variable_count_target_mode_to_events,
@@ -20,7 +20,7 @@ from mldmx.datasets.ecal_tpad_loading import (
     load_processed_tensor_events,
     load_or_create_sharded_tensor_events,
 )
-from mldmx.datasets.ecal_tpad_shards import (
+from ml_ldmx.datasets.ecal_tpad_shards import (
     MultiShardedECalTpadDataset,
     ShardedECalTpadDataset,
     has_sharded_tensor_cache,
@@ -28,13 +28,13 @@ from mldmx.datasets.ecal_tpad_shards import (
     validate_sharded_cache_request,
     validate_sharded_tensor_cache,
 )
-from mldmx.datasets.preprocess import (
+from ml_ldmx.datasets.preprocess import (
     fit_continuous_feature_normalization,
     normalize_continuous_features,
     normalize_event_continuous_features,
 )
-from mldmx.datasets.stats import count_classes, target_order_counts
-from mldmx.datasets.model_views import (
+from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.datasets.model_views import (
     ecal_gravnet_view,
     ecal_tpad_gravnet_view,
     ecal_tpad_slot_model_view,

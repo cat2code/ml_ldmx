@@ -2,9 +2,9 @@ import unittest
 
 import torch
 
-from mldmx.models import ECalGravNet, ECalTransformer
-from mldmx.train.hit_classifier_baseline import compute_batch_losses, compute_event_losses
-from mldmx.train.hit_classifier_batching import (
+from ml_ldmx.models import ECalGravNet, ECalTransformer
+from ml_ldmx.train.hit_classifier_baseline import compute_batch_losses, compute_event_losses
+from ml_ldmx.train.hit_classifier_batching import (
     IGNORE_INDEX,
     collate_gravnet_hit_classifier_batch,
     collate_transformer_hit_classifier_batch,

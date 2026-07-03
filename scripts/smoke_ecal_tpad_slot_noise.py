@@ -13,13 +13,13 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_loading import (
+from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_variable_count_target_mode,
     load_grouped_root_tensor_events,
 )
-from mldmx.eval.ecal_tpad_slot_model import evaluate
-from mldmx.models import ECalTpadSlotModel
-from mldmx.train.ecal_tpad_slot_model import compute_event_losses
+from ml_ldmx.eval.ecal_tpad_slot_model import evaluate
+from ml_ldmx.models import ECalTpadSlotModel
+from ml_ldmx.train.ecal_tpad_slot_model import compute_event_losses
 
 
 VALID_LABELS = (1, 2, 3)

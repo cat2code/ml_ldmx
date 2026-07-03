@@ -3,13 +3,13 @@
 import torch
 import torch.nn.functional as F
 
-from mldmx.train.batching import chunks
-from mldmx.train.hit_classifier_batching import (
+from ml_ldmx.train.batching import chunks
+from ml_ldmx.train.hit_classifier_batching import (
     collate_hit_classifier_batch,
     event_views_from_indices,
     hit_classifier_batch_kind,
 )
-from mldmx.train.hit_classifier_baseline import (
+from ml_ldmx.train.hit_classifier_baseline import (
     compute_batch_losses,
     compute_event_losses,
     empty_metric_totals,

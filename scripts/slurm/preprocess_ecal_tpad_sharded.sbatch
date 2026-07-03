@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=mldmx_tensorize
+#SBATCH --job-name=ml_ldmx_tensorize
 #SBATCH --output=outputs/slurm/%x_%j.out
 #SBATCH --error=outputs/slurm/%x_%j.err
 #SBATCH --time=24:00:00
@@ -9,8 +9,8 @@
 set -euo pipefail
 
 # Submit once per independent physical dataset:
-# sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/mldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
-# sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/mldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+# sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+# sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
 
 : "${SOURCE_LABEL:?Set SOURCE_LABEL, for example 2e or 3e}"
 : "${ELECTRON_COUNT:?Set ELECTRON_COUNT, for example 2 or 3}"

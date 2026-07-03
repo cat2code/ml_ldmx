@@ -1,7 +1,7 @@
 """
-Run from the mldmx directory:
+Run from the ml_ldmx directory:
 
-    cd mldmx
+    cd ml_ldmx
     python3 -m pip install -e .
     python3 scripts/simple_3_class_classification_ecal_transformer.py
 
@@ -21,10 +21,10 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from mldmx.datasets.tensorize import tensorize_ecal_node_classification
-from mldmx.io.root_reader import read_ecal_rechits_with_truth
-from mldmx.models import ECalHitTransformer
-from mldmx.viz.ecal import plot_ecal_hit_classes_3d
+from ml_ldmx.datasets.tensorize import tensorize_ecal_node_classification
+from ml_ldmx.io.root_reader import read_ecal_rechits_with_truth
+from ml_ldmx.models import ECalHitTransformer
+from ml_ldmx.viz.ecal import plot_ecal_hit_classes_3d
 
 
 VALID_LABELS = (1, 2, 3)

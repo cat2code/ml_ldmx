@@ -1,7 +1,7 @@
 """
 Preprocess labelled ECal RecHits plus TriggerPadTracks context into per-event tensors.
 
-Run from the mldmx directory:
+Run from the ml_ldmx directory:
 
     python3 scripts/preprocess_ecal_tpad_dataset.py
 """
@@ -12,10 +12,10 @@ from pathlib import Path
 
 import torch
 
-from mldmx.datasets.ecal_tpad_dataset import save_tensor_event, write_manifest
-from mldmx.datasets.graph_builder import build_ecal_tpad_context_graph
-from mldmx.datasets.tensorize import tensorize_ecal_with_triggerpad_context
-from mldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
+from ml_ldmx.datasets.ecal_tpad_dataset import save_tensor_event, write_manifest
+from ml_ldmx.datasets.graph_builder import build_ecal_tpad_context_graph
+from ml_ldmx.datasets.tensorize import tensorize_ecal_with_triggerpad_context
+from ml_ldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
 
 
 VALID_LABELS = (1, 2, 3)

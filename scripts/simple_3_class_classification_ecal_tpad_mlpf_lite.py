@@ -1,7 +1,7 @@
 """
-Run from the mldmx directory:
+Run from the ml_ldmx directory:
 
-    cd mldmx
+    cd ml_ldmx
     python3 -m pip install -e . ; python3 scripts/simple_3_class_classification_ecal_tpad_mlpf_lite.py
 """
 
@@ -12,16 +12,16 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from mldmx.datasets.tensorize import (
+from ml_ldmx.datasets.tensorize import (
     origin_energy_fraction_targets,
     tensorize_ecal_with_triggerpad_context,
 )
-from mldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
-from mldmx.models import ECalTpadMLPFLiteTransformer
-from mldmx.train.losses import soft_label_cross_entropy
-from mldmx.train.utils import choose_device
-from mldmx.viz.ecal import plot_ecal_hit_classes_3d
-from mldmx.viz.fractions import (
+from ml_ldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
+from ml_ldmx.models import ECalTpadMLPFLiteTransformer
+from ml_ldmx.train.losses import soft_label_cross_entropy
+from ml_ldmx.train.utils import choose_device
+from ml_ldmx.viz.ecal import plot_ecal_hit_classes_3d
+from ml_ldmx.viz.fractions import (
     plot_fraction_error_3d,
     plot_fraction_mae_hist,
     plot_fraction_purity,

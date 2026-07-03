@@ -1,4 +1,4 @@
-# mldmx/src/mldmx/io/root_reader.py
+# ml_ldmx/src/ml_ldmx/io/root_reader.py
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import awkward as ak
 import uproot
 
-from mldmx.io.branches import get_all_branch_names, get_vector_branches
+from ml_ldmx.io.branches import get_all_branch_names, get_vector_branches
 
 '''
 This module provides utilities for reading ROOT files using uproot with awkward arrays. 

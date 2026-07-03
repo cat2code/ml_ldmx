@@ -1,7 +1,7 @@
 """
-Run from the mldmx directory:
+Run from the ml_ldmx directory:
 
-    cd mldmx
+    cd ml_ldmx
     python3 -m pip install -e .
     python3 scripts/simple_3_class_classification_ecal_tpad_gnn.py
 """
@@ -15,15 +15,15 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from mldmx.datasets.ecal_tpad_dataset import (
+from ml_ldmx.datasets.ecal_tpad_dataset import (
     ECalTriggerPadTensorDataset,
     tensor_event_to_pyg_data,
 )
-from mldmx.datasets.graph_builder import build_ecal_tpad_context_graph
-from mldmx.datasets.tensorize import tensorize_ecal_with_triggerpad_context
-from mldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
-from mldmx.models import ECalTriggerPadGNN
-from mldmx.viz.ecal import plot_ecal_hit_classes_3d
+from ml_ldmx.datasets.graph_builder import build_ecal_tpad_context_graph
+from ml_ldmx.datasets.tensorize import tensorize_ecal_with_triggerpad_context
+from ml_ldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
+from ml_ldmx.models import ECalTriggerPadGNN
+from ml_ldmx.viz.ecal import plot_ecal_hit_classes_3d
 
 
 VALID_LABELS = (1, 2, 3)

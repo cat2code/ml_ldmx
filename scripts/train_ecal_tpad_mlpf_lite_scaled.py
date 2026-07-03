@@ -3,9 +3,9 @@ Scaled ECAL/TPAD MLPF-lite training script.
 
 Example from the repository root:
 
-    python mldmx/scripts/train_ecal_tpad_mlpf_lite_scaled.py --max-events 1000 --epochs 1
+    python scripts/train_ecal_tpad_mlpf_lite_scaled.py --max-events 1000 --epochs 1
 
-Example from the mldmx directory:
+Example from the ml_ldmx directory:
 
     pip install -e .; python scripts/train_ecal_tpad_mlpf_lite_scaled.py --max-events 15000 --epochs 20
 
@@ -26,28 +26,28 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_dataset import (
+from ml_ldmx.datasets.ecal_tpad_dataset import (
     ECalTriggerPadTensorDataset,
     save_tensor_event,
     write_manifest,
 )
-from mldmx.datasets.ecal_tpad_loading import load_ecal_tpad_tensor_events
-from mldmx.datasets.preprocess import normalize_continuous_features
-from mldmx.datasets.stats import count_classes, target_order_counts
-from mldmx.eval.ecal_tpad_mlpf_lite import evaluate
-from mldmx.io.artifacts import save_config, save_history, save_json
-from mldmx.io.root_files import find_root_files
-from mldmx.models import ECalTpadMLPFLiteTransformer
-from mldmx.train.checkpoints import load_checkpoint, save_checkpoint
-from mldmx.train.ecal_tpad_mlpf_lite import train_one_epoch
-from mldmx.train.logging import setup_logging
-from mldmx.train.modeling import count_trainable_parameters, model_kwargs_from_args
-from mldmx.train.paths import resolve_data_dir, resolve_run_dir
-from mldmx.train.progress import make_progress
-from mldmx.train.splits import deterministic_split
-from mldmx.train.utils import resolve_device
-from mldmx.viz.ecal import plot_ecal_hit_classes_3d
-from mldmx.viz.training import plot_confusion_matrix, plot_history, plot_test_fraction_summaries
+from ml_ldmx.datasets.ecal_tpad_loading import load_ecal_tpad_tensor_events
+from ml_ldmx.datasets.preprocess import normalize_continuous_features
+from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.eval.ecal_tpad_mlpf_lite import evaluate
+from ml_ldmx.io.artifacts import save_config, save_history, save_json
+from ml_ldmx.io.root_files import find_root_files
+from ml_ldmx.models import ECalTpadMLPFLiteTransformer
+from ml_ldmx.train.checkpoints import load_checkpoint, save_checkpoint
+from ml_ldmx.train.ecal_tpad_mlpf_lite import train_one_epoch
+from ml_ldmx.train.logging import setup_logging
+from ml_ldmx.train.modeling import count_trainable_parameters, model_kwargs_from_args
+from ml_ldmx.train.paths import resolve_data_dir, resolve_run_dir
+from ml_ldmx.train.progress import make_progress
+from ml_ldmx.train.splits import deterministic_split
+from ml_ldmx.train.utils import resolve_device
+from ml_ldmx.viz.ecal import plot_ecal_hit_classes_3d
+from ml_ldmx.viz.training import plot_confusion_matrix, plot_history, plot_test_fraction_summaries
 
 
 VALID_LABELS = (1, 2, 3)

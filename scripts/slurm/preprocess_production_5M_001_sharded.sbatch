@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=mldmx_tensorize_5M
-#SBATCH --output=/projects/hep/fs9/shared/ldmx/users/eliotmp/tensorize_production_5M_001_%j.out
-#SBATCH --error=/projects/hep/fs9/shared/ldmx/users/eliotmp/tensorize_production_5M_001_%j.err
+#SBATCH --job-name=ml_ldmx_tensorize_5M
+#SBATCH --output=outputs/slurm/%x_%j.out
+#SBATCH --error=outputs/slurm/%x_%j.err
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
@@ -9,12 +9,13 @@
 set -euo pipefail
 
 # Expected Cosmos layout:
-#   /projects/hep/fs9/shared/ldmx/users/eliotmp/production_5M_001/{2e,3e}/events/*.root
-#   /projects/hep/fs9/shared/ldmx/users/eliotmp/mpetren-msceng-ldmx/
+#   /path/to/work/production_5M_001/{2e,3e}/events/*.root
+#   /path/to/work/ml_ldmx/
 #
 # Submit after pulling the repository on Cosmos:
-#   cd /projects/hep/fs9/shared/ldmx/users/eliotmp
-#   sbatch mpetren-msceng-ldmx/mldmx/scripts/slurm/preprocess_production_5M_001_sharded.sbatch
+#   cd /path/to/work/ml_ldmx
+#   mkdir -p outputs/slurm
+#   sbatch scripts/slurm/preprocess_production_5M_001_sharded.sbatch
 #
 # Follow output after submission, replacing JOB_ID with the ID printed by sbatch:
 #   tail -F tensorize_production_5M_001_JOB_ID.out tensorize_production_5M_001_JOB_ID.err
@@ -24,10 +25,10 @@ set -euo pipefail
 # To bypass validation of an existing valid prefix, for example after completing
 # 2e shards 1-184, submit with --export=ALL,RESUME_2E_FROM_ROOT_INDEX=185.
 
-WORK_DIR="${WORK_DIR:-/projects/hep/fs9/shared/ldmx/users/eliotmp}"
-REPO_DIR="${REPO_DIR:-${WORK_DIR}/mpetren-msceng-ldmx}"
+REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
+WORK_DIR="${WORK_DIR:-$(dirname "${REPO_DIR}")}"
 DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/mldmx/data/processed/production_5M_001_sharded}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_5M_001_sharded}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
 RESUME_2E_FROM_ROOT_INDEX="${RESUME_2E_FROM_ROOT_INDEX:-1}"
@@ -37,8 +38,8 @@ module purge
 module load GCCcore/13.2.0
 module load Python/3.11.5
 
-if [[ ! -f "${REPO_DIR}/mldmx/scripts/preprocess_ecal_tpad_sharded.py" ]]; then
-  echo "Missing preprocessor in repository: ${REPO_DIR}/mldmx/scripts/preprocess_ecal_tpad_sharded.py" >&2
+if [[ ! -f "${REPO_DIR}/scripts/preprocess_ecal_tpad_sharded.py" ]]; then
+  echo "Missing preprocessor in repository: ${REPO_DIR}/scripts/preprocess_ecal_tpad_sharded.py" >&2
   exit 1
 fi
 
@@ -76,7 +77,7 @@ for electron_count in 2 3; do
 
   echo
   echo "Tensorizing ${label} from ROOT index ${resume_from_root_index}: ${input_dir} -> ${output_dir}"
-  "${PYTHON_BIN}" -u mldmx/scripts/preprocess_ecal_tpad_sharded.py \
+  "${PYTHON_BIN}" -u scripts/preprocess_ecal_tpad_sharded.py \
     --input-root-dir "${input_dir}" \
     --electron-count "${electron_count}" \
     --source-label "${label}" \

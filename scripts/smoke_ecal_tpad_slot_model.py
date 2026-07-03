@@ -3,9 +3,9 @@ Smoke test for the ECal + TriggerPadTracks slot-validity model.
 
 Examples from the repository root:
 
-    python mldmx/scripts/smoke_ecal_tpad_slot_model.py --max-events 3
+    python scripts/smoke_ecal_tpad_slot_model.py --max-events 3
 
-Example from the mldmx directory:
+Example from the ml_ldmx directory:
 
     python scripts/smoke_ecal_tpad_slot_model.py --max-events 3
 """
@@ -23,11 +23,11 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_dataset import ECalTriggerPadTensorDataset
-from mldmx.datasets.ecal_tpad_loading import load_ecal_tpad_tensor_events
-from mldmx.io.root_files import find_root_files
-from mldmx.models import ECalTpadSlotModel
-from mldmx.train.losses import soft_label_cross_entropy
+from ml_ldmx.datasets.ecal_tpad_dataset import ECalTriggerPadTensorDataset
+from ml_ldmx.datasets.ecal_tpad_loading import load_ecal_tpad_tensor_events
+from ml_ldmx.io.root_files import find_root_files
+from ml_ldmx.models import ECalTpadSlotModel
+from ml_ldmx.train.losses import soft_label_cross_entropy
 
 
 VALID_LABELS = (1, 2, 3)

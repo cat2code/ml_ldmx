@@ -3,10 +3,10 @@ import time
 import torch
 import torch.nn.functional as F
 
-from mldmx.train.batching import chunks
-from mldmx.train.losses import soft_label_cross_entropy
-from mldmx.train.metrics import confusion_matrix_from_class_indices
-from mldmx.train.progress import make_progress
+from ml_ldmx.train.batching import chunks
+from ml_ldmx.train.losses import soft_label_cross_entropy
+from ml_ldmx.train.metrics import confusion_matrix_from_class_indices
+from ml_ldmx.train.progress import make_progress
 
 
 def ecal_mask_from_event(event: dict) -> torch.Tensor:

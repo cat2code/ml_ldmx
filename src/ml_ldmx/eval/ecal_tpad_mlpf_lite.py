@@ -1,8 +1,8 @@
 import torch
 
-from mldmx.train.batching import chunks
-from mldmx.train.ecal_tpad_mlpf_lite import compute_event_losses
-from mldmx.train.metrics import empty_metric_totals, finalize_metrics, update_metric_totals
+from ml_ldmx.train.batching import chunks
+from ml_ldmx.train.ecal_tpad_mlpf_lite import compute_event_losses
+from ml_ldmx.train.metrics import empty_metric_totals, finalize_metrics, update_metric_totals
 
 
 @torch.no_grad()

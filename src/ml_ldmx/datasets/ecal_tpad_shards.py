@@ -9,8 +9,8 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from mldmx.io.root_files import find_root_files
-from mldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
+from ml_ldmx.io.root_files import find_root_files
+from ml_ldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
 
 
 SHARD_CACHE_SCHEMA_VERSION = 1
@@ -200,7 +200,7 @@ def prepare_sharded_tensor_cache(
     logger=None,
 ):
     """Create or resume a one-ROOT-file-per-shard canonical tensor cache."""
-    from mldmx.datasets.ecal_tpad_loading import (
+    from ml_ldmx.datasets.ecal_tpad_loading import (
         attach_root_source_metadata,
         ecal_tpad_event_to_tensors,
     )

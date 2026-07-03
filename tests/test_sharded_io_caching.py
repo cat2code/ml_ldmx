@@ -5,9 +5,9 @@ import unittest
 
 import torch
 
-from mldmx.datasets.cached_views import CachedEventViewDataset
-from mldmx.datasets.ecal_tpad_loading import load_processed_or_grouped_root_tensor_events
-from mldmx.datasets.ecal_tpad_shards import (
+from ml_ldmx.datasets.cached_views import CachedEventViewDataset
+from ml_ldmx.datasets.ecal_tpad_loading import load_processed_or_grouped_root_tensor_events
+from ml_ldmx.datasets.ecal_tpad_shards import (
     SHARD_CACHE_SCHEMA_VERSION,
     SHARD_PAYLOAD_SCHEMA_VERSION,
     ShardedECalTpadDataset,

@@ -10,11 +10,11 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_loading import (
+from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_variable_count_target_mode,
     load_processed_tensor_events,
 )
-from mldmx.datasets.model_views import (
+from ml_ldmx.datasets.model_views import (
     ecal_gravnet_view,
     ecal_tpad_gravnet_view,
     ecal_tpad_slot_model_view,

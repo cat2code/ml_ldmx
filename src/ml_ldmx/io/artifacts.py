@@ -2,7 +2,7 @@ import csv
 import json
 from pathlib import Path
 
-from mldmx.io.root_files import root_file_sort_key
+from ml_ldmx.io.root_files import root_file_sort_key
 
 
 def save_json(path, payload):

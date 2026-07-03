@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J mldmx_baseline
+#SBATCH -J ml_ldmx_baseline
 #SBATCH -p gpua100i
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-/projects/hep/fs9/shared/ldmx/users/eliotmp/mpetren-msceng-ldmx}"
+REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_5M_001_sharded}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/cosmos_baselines}"
 MODEL="${MODEL:-ECalTpadTransformer}"
@@ -52,9 +52,9 @@ module purge
 module load GCCcore/13.2.0
 module load Python/3.11.5
 
-cd "${REPO_ROOT}/mldmx"
+cd "${REPO_ROOT}"
 mkdir -p outputs/slurm "${OUTPUT_ROOT}"
-source "${REPO_ROOT}/.venv/bin/activate"
+source "${VENV_DIR:-${REPO_ROOT}/.venv}/bin/activate"
 python -m pip install -e .
 
 echo "host: $(hostname)"

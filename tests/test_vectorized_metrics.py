@@ -2,12 +2,12 @@ import unittest
 
 import torch
 
-from mldmx.train.hit_classifier_baseline import (
+from ml_ldmx.train.hit_classifier_baseline import (
     empty_metric_totals as empty_baseline_totals,
     finalize_metrics as finalize_baseline_metrics,
     update_metric_totals as update_baseline_totals,
 )
-from mldmx.train.metrics import (
+from ml_ldmx.train.metrics import (
     classification_metrics_from_confusion,
     confusion_components_from_confusion,
     confusion_matrix_from_class_indices,
@@ -16,13 +16,13 @@ from mldmx.train.metrics import (
     finalize_metrics,
     update_metric_totals,
 )
-from mldmx.train.ecal_tpad_slot_model import (
+from ml_ldmx.train.ecal_tpad_slot_model import (
     empty_slot_metric_totals,
     finalize_slot_metrics,
     update_slot_metric_totals,
 )
-from mldmx.viz.event_level import _confusion_from_labels, plot_event_count_confusion_matrix
-from mldmx.viz.training import plot_confusion_matrix
+from ml_ldmx.viz.event_level import _confusion_from_labels, plot_event_count_confusion_matrix
+from ml_ldmx.viz.training import plot_confusion_matrix
 
 
 def _old_baseline_update(totals, losses):

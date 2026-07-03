@@ -1,7 +1,7 @@
 import torch
 
-from mldmx.train.batching import chunks
-from mldmx.train.ecal_tpad_slot_model import (
+from ml_ldmx.train.batching import chunks
+from ml_ldmx.train.ecal_tpad_slot_model import (
     compute_event_losses,
     empty_slot_metric_totals,
     event_prediction_record,

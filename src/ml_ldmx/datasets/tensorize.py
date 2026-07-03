@@ -1,4 +1,4 @@
-# mldmx/src/mldmx/data/tensorize.py
+# ml_ldmx/src/ml_ldmx/data/tensorize.py
 
 import awkward as ak
 import numpy as np

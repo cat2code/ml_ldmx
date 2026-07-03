@@ -5,14 +5,14 @@ import time
 import torch
 import torch.nn.functional as F
 
-from mldmx.train.batching import chunks
-from mldmx.train.hit_classifier_batching import (
+from ml_ldmx.train.batching import chunks
+from ml_ldmx.train.hit_classifier_batching import (
     collate_hit_classifier_batch,
     event_views_from_indices,
     hit_classifier_batch_kind,
 )
-from mldmx.train.metrics import confusion_matrix_from_class_indices
-from mldmx.train.progress import make_progress
+from ml_ldmx.train.metrics import confusion_matrix_from_class_indices
+from ml_ldmx.train.progress import make_progress
 
 
 def compute_event_losses(model, event_or_view, view_fn, device):

@@ -4,7 +4,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 
-from mldmx.train.metrics import confusion_matrix_from_labels
+from ml_ldmx.train.metrics import confusion_matrix_from_labels
 
 
 def _confusion_from_labels(y_true, y_pred, labels):

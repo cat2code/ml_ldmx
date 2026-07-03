@@ -1,4 +1,4 @@
-# Maintained MLDMX Model Family: Design Baseline
+# Maintained ml_ldmx Model Family: Design Baseline
 
 ## Status and Scope
 
@@ -47,12 +47,12 @@ The current slot-model runner is
    `data/processed/ecal_tpad_slot_model/`. Otherwise it loads balanced samples
    from the `2e/events` and `3e/events` ROOT directories beneath
    `data/ldmx_overlay_events_700k/`.
-2. **ROOT reading.** `mldmx.io.root_files.find_root_files()` orders ROOT files.
-   `mldmx.io.root_reader.iter_ecal_rechits_with_truth_and_triggerpad_context()`
+2. **ROOT reading.** `ml_ldmx.io.root_files.find_root_files()` orders ROOT files.
+   `ml_ldmx.io.root_reader.iter_ecal_rechits_with_truth_and_triggerpad_context()`
    reads ECal RecHits, ECal sim-hit contribution truth, and
    `TriggerPadTracks_overlay` through one tree handle, optionally in chunks.
    Truth contributions are aligned to RecHits by hit ID.
-3. **Tensorization.** `mldmx.datasets.ecal_tpad_loading` calls
+3. **Tensorization.** `ml_ldmx.datasets.ecal_tpad_loading` calls
    `tensorize_ecal_with_triggerpad_context()` and
    `origin_energy_fraction_targets()`. ECal nodes precede TriggerPadTracks
    nodes in a variable-length event tensor. Loss targets exist for ECal nodes
@@ -68,10 +68,10 @@ The current slot-model runner is
    using training-split statistics only.
 6. **Model and training.** `ECalTpadSlotModel` encodes all event tokens and
    produces per-token origin and fraction logits plus event-level
-   slot-validity and electron-count logits. `mldmx.train.ecal_tpad_slot_model`
+   slot-validity and electron-count logits. `ml_ldmx.train.ecal_tpad_slot_model`
    applies hit losses only at ECal nodes, accumulates event-level metrics, and
    optimizes per small group of events.
-7. **Evaluation.** `mldmx.eval.ecal_tpad_slot_model.evaluate()` reuses the
+7. **Evaluation.** `ml_ldmx.eval.ecal_tpad_slot_model.evaluate()` reuses the
    training loss/metric definitions for validation and test splits and can
    collect event-count prediction records.
 8. **Artifacts.** Shared artifact and checkpoint helpers write configuration,
@@ -80,7 +80,7 @@ The current slot-model runner is
    `outputs/ecal_tpad_slot_model/<run-name>/`.
 9. **Plots.** The workflow writes loss/accuracy histories, hit-origin
    confusion plots, event-count confusion plots, and ECal truth/prediction 3D
-   plots through `mldmx.viz`.
+   plots through `ml_ldmx.viz`.
 
 `scripts/train_ecal_tpad_mlpf_lite_scaled.py` adds a useful signature-based
 tensor cache for a scalable single-source workflow, but its two-head MLPF-lite
@@ -207,12 +207,12 @@ does not change event selection or target ordering.
 
 | Code | Reuse |
 | --- | --- |
-| `src/mldmx/io/branches.py`, `root_reader.py`, `root_files.py` | Branch definitions, hit/truth alignment, combined ROOT streaming, file ordering. |
-| `src/mldmx/datasets/tensorize.py` | Core ECal/TPAD feature construction and physical contribution fractions. |
-| `src/mldmx/datasets/ecal_tpad_dataset.py` | Per-event tensor storage, manifests, and optional PyG conversion. |
-| `src/mldmx/datasets/preprocess.py`, `stats.py` | Training-only normalization and basic reporting. |
-| `src/mldmx/train/splits.py`, `checkpoints.py`, `logging.py`, `paths.py`, `progress.py`, `batching.py` | Run mechanics used by current workflows. |
-| `src/mldmx/io/artifacts.py`, `src/mldmx/viz/` | Artifact writing and useful diagnostic plotting primitives. |
+| `src/ml_ldmx/io/branches.py`, `root_reader.py`, `root_files.py` | Branch definitions, hit/truth alignment, combined ROOT streaming, file ordering. |
+| `src/ml_ldmx/datasets/tensorize.py` | Core ECal/TPAD feature construction and physical contribution fractions. |
+| `src/ml_ldmx/datasets/ecal_tpad_dataset.py` | Per-event tensor storage, manifests, and optional PyG conversion. |
+| `src/ml_ldmx/datasets/preprocess.py`, `stats.py` | Training-only normalization and basic reporting. |
+| `src/ml_ldmx/train/splits.py`, `checkpoints.py`, `logging.py`, `paths.py`, `progress.py`, `batching.py` | Run mechanics used by current workflows. |
+| `src/ml_ldmx/io/artifacts.py`, `src/ml_ldmx/viz/` | Artifact writing and useful diagnostic plotting primitives. |
 
 ### Extract Later
 
@@ -241,10 +241,10 @@ does not change event selection or target ordering.
 | `scripts/root_to_tensor_smoke.py` | Early ROOT-to-padded-tensor smoke test. |
 | `scripts/preprocess_ecal_tpad_dataset.py` | Useful prototype preprocessor; lacks the final contract/caching policy. |
 | `scripts/preprocess_dataset.py` | Placeholder. |
-| `scripts/train_ecal_tpad_mlpf_lite_scaled.py` and `src/mldmx/models/ecal_tpad_mlpf_lite.py` | Current scalable two-head experiment and migration reference, not a maintained target model. |
-| `src/mldmx/models/ecal_tpad_gnn.py` | `GraphConv` TPAD prototype; not the maintained GravNet architecture. |
-| `src/mldmx/models/gnn_gravnet.py` | Maintained `ECalGravNet` and `ECalTpadGravNet` architectures. |
-| `src/mldmx/models/simple_gnn.py`, `src/mldmx/train/train_tiny_gnn.py` | Infrastructure/dummy event-classification prototype. |
+| `scripts/train_ecal_tpad_mlpf_lite_scaled.py` and `src/ml_ldmx/models/ecal_tpad_mlpf_lite.py` | Current scalable two-head experiment and migration reference, not a maintained target model. |
+| `src/ml_ldmx/models/ecal_tpad_gnn.py` | `GraphConv` TPAD prototype; not the maintained GravNet architecture. |
+| `src/ml_ldmx/models/gnn_gravnet.py` | Maintained `ECalGravNet` and `ECalTpadGravNet` architectures. |
+| `src/ml_ldmx/models/simple_gnn.py`, `src/ml_ldmx/train/train_tiny_gnn.py` | Infrastructure/dummy event-classification prototype. |
 
 `scripts/train_hit_classifier_baseline.py` is the maintained entry point for
 the four baseline classifiers and supersedes the simple classification scripts
@@ -266,7 +266,7 @@ mixed-detector view once per event and reuse it across epochs, avoiding
 repeated adapter validation and slicing without changing targets or features.
 
 For large repeated training jobs, the scalable storage path is
-`src/mldmx/datasets/ecal_tpad_shards.py`: one numerically ordered input ROOT
+`src/ml_ldmx/datasets/ecal_tpad_shards.py`: one numerically ordered input ROOT
 file is tensorized into one ML-ready `.pt` shard with a manifest and
 event-offset index. Shards store the same canonical combined event contract
 and physical-origin provenance, including explicit noise rows by default.

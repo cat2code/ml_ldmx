@@ -3,10 +3,10 @@ Below is the final prompt sequence. Run each prompt in a separate Codex task, in
 ## Part 1: Document The Reference Architecture And Workflow
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
-Create the design baseline for the maintained MLDMX model family. Treat `scripts/train_ecal_tpad_slot_model.py` as the best current end-to-end reference workflow for IO, ROOT reading, tensorization, training, evaluation, checkpoints, and visualization.
+Create the design baseline for the maintained ml_ldmx model family. Treat `scripts/train_ecal_tpad_slot_model.py` as the best current end-to-end reference workflow for IO, ROOT reading, tensorization, training, evaluation, checkpoints, and visualization.
 
 Maintained target models:
 1. `ECalGravNet`: ECal-only GravNetConv hit-origin classifier.
@@ -27,16 +27,16 @@ Inspect:
 - `README.md`
 - `scripts/train_ecal_tpad_slot_model.py`
 - `scripts/train_ecal_tpad_mlpf_lite_scaled.py`
-- `src/mldmx/io/`
-- `src/mldmx/datasets/`
-- `src/mldmx/models/`
-- `src/mldmx/train/`
-- `src/mldmx/eval/`
-- `src/mldmx/viz/`
+- `src/ml_ldmx/io/`
+- `src/ml_ldmx/datasets/`
+- `src/ml_ldmx/models/`
+- `src/ml_ldmx/train/`
+- `src/ml_ldmx/eval/`
+- `src/ml_ldmx/viz/`
 - existing prototype scripts
 
 Task:
-1. Create a concise design document under `mldmx/docs/`.
+1. Create a concise design document under `ml_ldmx/docs/`.
 2. Describe the current slot-model workflow from ROOT files through tensorization, training, evaluation, checkpoints, and plots.
 3. Define the canonical tensor-event schema that future maintained models should consume.
 4. Explain how ECal-only models should use a derived view of the same canonical event instead of a separate IO/tensorization pipeline.
@@ -58,7 +58,7 @@ Report the document created, the canonical event contract, the intended maintain
 ## Part 2: Extract Shared Data Loading From The Working Slot Pipeline
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Extract reusable data-loading and event-preparation behavior from `scripts/train_ecal_tpad_slot_model.py`, while keeping the existing slot-model training workflow functional.
@@ -67,14 +67,14 @@ Reference workflow:
 - `scripts/train_ecal_tpad_slot_model.py`
 
 Relevant modules:
-- `src/mldmx/io/root_reader.py`
-- `src/mldmx/io/root_files.py`
-- `src/mldmx/datasets/tensorize.py`
-- `src/mldmx/datasets/ecal_tpad_loading.py`
-- `src/mldmx/datasets/ecal_tpad_dataset.py`
-- `src/mldmx/datasets/preprocess.py`
-- `src/mldmx/train/paths.py`
-- `src/mldmx/train/splits.py`
+- `src/ml_ldmx/io/root_reader.py`
+- `src/ml_ldmx/io/root_files.py`
+- `src/ml_ldmx/datasets/tensorize.py`
+- `src/ml_ldmx/datasets/ecal_tpad_loading.py`
+- `src/ml_ldmx/datasets/ecal_tpad_dataset.py`
+- `src/ml_ldmx/datasets/preprocess.py`
+- `src/ml_ldmx/train/paths.py`
+- `src/ml_ldmx/train/splits.py`
 
 Required design:
 - The canonical event representation remains the combined ECal + TriggerPad tensor event currently used by the slot workflow.
@@ -111,7 +111,7 @@ Verification:
 ## Part 3: Add Shared Model Input Views
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Add model-facing adapters that derive all required maintained-model inputs from one canonical combined tensor event.
@@ -120,13 +120,13 @@ Canonical combined feature layout:
 [is_ecal, is_tpad, ecal_x, ecal_y, ecal_z, ecal_energy, tpad_centroid, tpad_pe]
 
 Relevant modules:
-- `src/mldmx/datasets/tensorize.py`
-- `src/mldmx/datasets/ecal_tpad_dataset.py`
-- `src/mldmx/datasets/graph_builder.py`
+- `src/ml_ldmx/datasets/tensorize.py`
+- `src/ml_ldmx/datasets/ecal_tpad_dataset.py`
+- `src/ml_ldmx/datasets/graph_builder.py`
 - shared loading/preparation utilities extracted previously
 
 Task:
-1. Add a small explicit adapter module in `src/mldmx/datasets/`.
+1. Add a small explicit adapter module in `src/ml_ldmx/datasets/`.
 2. Given one canonical event, support:
    - ECal-only token input for `ECalTransformer`;
    - full ECal + TriggerPad token input for `ECalTpadTransformer`;
@@ -157,7 +157,7 @@ Run the adapter validation using `data/processed/ecal_tpad_3class_smoke/` and re
 ## Part 4: Extract Reusable Runtime And Artifact Utilities
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Extract the non-model-specific runtime and artifact-management behavior from the working slot trainer so later baseline trainers can reuse it without duplicating infrastructure.
@@ -166,12 +166,12 @@ Reference:
 - `scripts/train_ecal_tpad_slot_model.py`
 
 Relevant modules:
-- `src/mldmx/io/artifacts.py`
-- `src/mldmx/train/checkpoints.py`
-- `src/mldmx/train/logging.py`
-- `src/mldmx/train/paths.py`
-- `src/mldmx/train/progress.py`
-- `src/mldmx/viz/`
+- `src/ml_ldmx/io/artifacts.py`
+- `src/ml_ldmx/train/checkpoints.py`
+- `src/ml_ldmx/train/logging.py`
+- `src/ml_ldmx/train/paths.py`
+- `src/ml_ldmx/train/progress.py`
+- `src/ml_ldmx/viz/`
 
 Task:
 1. Identify logic in the slot training script that is genuinely general:
@@ -203,7 +203,7 @@ Run the slot-model CPU smoke test and a tiny training invocation if feasible. Co
 ## Part 5: Implement The Two Maintained GravNet Models
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Implement the two maintained GravNetConv baseline architectures using data from the shared slot-derived event pipeline and adapter layer.
@@ -213,10 +213,10 @@ Target classes:
 2. `ECalTpadGravNet`: ECal + TriggerPad context origin-electron hit classifier.
 
 Relevant files:
-- `src/mldmx/models/gnn_gravnet.py`
-- `src/mldmx/models/__init__.py`
+- `src/ml_ldmx/models/gnn_gravnet.py`
+- `src/ml_ldmx/models/__init__.py`
 - shared event-view adapters
-- `src/mldmx/models/ecal_tpad_gnn.py` as legacy reference only
+- `src/ml_ldmx/models/ecal_tpad_gnn.py` as legacy reference only
 
 Scientific intent:
 - Both models produce per-node origin-class logits.
@@ -227,7 +227,7 @@ Task:
 1. Replace the placeholder implementation in `gnn_gravnet.py` with both maintained model classes using `torch_geometric.nn.GravNetConv`.
 2. Use a consistent constructor and forward/output contract for both classes.
 3. Do not require the older manually built `edge_index` interface if it is not part of the GravNetConv model contract.
-4. Export both new classes from `src/mldmx/models/__init__.py`.
+4. Export both new classes from `src/ml_ldmx/models/__init__.py`.
 5. Preserve `ecal_tpad_gnn.py` as legacy code for now.
 6. Add a focused CPU smoke script or test that:
    - loads a canonical event through the shared loader;
@@ -249,7 +249,7 @@ Run the new GravNet smoke validation on CPU and report input shapes, logits shap
 ## Part 6: Implement The Two Maintained Transformer Baselines
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Implement the two maintained full-self-attention baseline transformer architectures using the same shared canonical event pipeline as the slot model.
@@ -259,8 +259,8 @@ Target classes:
 2. `ECalTpadTransformer`: ECal + TriggerPad origin-electron hit classifier.
 
 Relevant files:
-- `src/mldmx/models/ecal_transformer.py`
-- `src/mldmx/models/__init__.py`
+- `src/ml_ldmx/models/ecal_transformer.py`
+- `src/ml_ldmx/models/__init__.py`
 - shared event-view adapters
 - existing simple transformer scripts as prototype references only
 
@@ -275,7 +275,7 @@ Task:
 2. Keep a consistent baseline output contract: per-input-node origin-class logits.
 3. Ensure `ECalTpadTransformer` performs attention over the full combined token sequence.
 4. Preserve a compatibility alias for existing prototype usage only if it prevents unnecessary breakage.
-5. Export both maintained classes from `src/mldmx/models/__init__.py`.
+5. Export both maintained classes from `src/ml_ldmx/models/__init__.py`.
 6. Add a focused CPU smoke script or test that:
    - loads one canonical event through the shared pipeline;
    - derives ECal-only and ECal + TriggerPad transformer views;
@@ -296,7 +296,7 @@ Run the transformer smoke validation on CPU and report model input shapes, logit
 ## Part 7: Validate All Five Maintained Models Through One Common Pipeline
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Create one integration validation script showing that all five maintained architectures consume events produced through the shared workflow derived from `scripts/train_ecal_tpad_slot_model.py`.
@@ -345,7 +345,7 @@ Run the new validation script on CPU using the processed smoke dataset and repor
 ## Part 8: Resolve Noise Supervision For The Advanced Model
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Resolve whether and how `ECalTpadSlotModel` can learn its intended noise/background task, given that the current workflow usually filters noise hits.
@@ -357,11 +357,11 @@ Explicitly out of scope:
 - event-level `is_signal` classification.
 
 Relevant files:
-- `src/mldmx/datasets/tensorize.py`
-- `src/mldmx/datasets/ecal_tpad_loading.py`
-- `src/mldmx/models/ecal_tpad_slot_model.py`
-- `src/mldmx/train/ecal_tpad_slot_model.py`
-- `src/mldmx/eval/ecal_tpad_slot_model.py`
+- `src/ml_ldmx/datasets/tensorize.py`
+- `src/ml_ldmx/datasets/ecal_tpad_loading.py`
+- `src/ml_ldmx/models/ecal_tpad_slot_model.py`
+- `src/ml_ldmx/train/ecal_tpad_slot_model.py`
+- `src/ml_ldmx/eval/ecal_tpad_slot_model.py`
 - `scripts/train_ecal_tpad_slot_model.py`
 - `scripts/smoke_ecal_tpad_slot_model.py`
 
@@ -388,7 +388,7 @@ Report whether noise classification was previously trained, what explicit behavi
 ## Part 9: Add Shared Baseline Training
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Add a common training entry point for the four baseline hit-origin classifiers, reusing infrastructure extracted from the working slot-model workflow.
@@ -441,7 +441,7 @@ Verification:
 ## Part 10: Benchmark And Improve Throughput Before Cluster Deployment
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Measure and improve the performance bottlenecks that matter before moving training to a larger cluster dataset.
@@ -479,7 +479,7 @@ Run the benchmark locally and report timings. For any implemented improvement, p
 ## Part 11: Prepare The Validated Workflow For Cluster Execution
 
 ```text
-Work inside the `mldmx/` directory only.
+Work inside the `ml_ldmx/` directory only.
 
 Goal:
 Prepare the validated common data/model workflow for execution on a computing cluster with the same Python environment and larger available datasets.
@@ -508,7 +508,7 @@ Task:
    - random seed;
    - resume checkpoint wherever resume is already supported.
 3. Preserve local defaults where reasonable.
-4. Add a concise cluster execution guide under `mldmx/docs/` showing:
+4. Add a concise cluster execution guide under `ml_ldmx/docs/` showing:
    - package installation in the existing Python environment;
    - five-model validation invocation;
    - example baseline training invocations;

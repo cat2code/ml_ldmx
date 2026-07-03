@@ -6,8 +6,8 @@ import unittest
 import torch
 import torch.nn as nn
 
-from mldmx.eval.hit_classifier_baseline import collect_event_metrics
-from mldmx.viz.training import plot_event_accuracy_overview
+from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics
+from ml_ldmx.viz.training import plot_event_accuracy_overview
 
 
 class IdentityLogitModel(nn.Module):

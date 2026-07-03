@@ -16,28 +16,28 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_loading import (
+from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_variable_count_target_mode,
     filter_noise_tensor_event,
     load_multi_sharded_tensor_events,
     load_processed_or_grouped_root_tensor_events,
 )
-from mldmx.datasets.model_views import (
+from ml_ldmx.datasets.model_views import (
     ecal_gravnet_view,
     ecal_tpad_gravnet_view,
     ecal_tpad_slot_model_view,
     ecal_tpad_transformer_view,
     ecal_transformer_view,
 )
-from mldmx.models import (
+from ml_ldmx.models import (
     ECalGravNet,
     ECalTpadGravNet,
     ECalTpadSlotModel,
     ECalTpadTransformer,
     ECalTransformer,
 )
-from mldmx.train.ecal_tpad_slot_model import compute_event_losses as compute_slot_event_losses
-from mldmx.train.paths import resolve_existing_path
+from ml_ldmx.train.ecal_tpad_slot_model import compute_event_losses as compute_slot_event_losses
+from ml_ldmx.train.paths import resolve_existing_path
 
 
 VALID_LABELS = (1, 2, 3)

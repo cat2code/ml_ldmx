@@ -1,7 +1,7 @@
 """
-Run from the mldmx directory:
+Run from the ml_ldmx directory:
 
-    cd mldmx
+    cd ml_ldmx
     python3 -m pip install -e .
     python3 scripts/simple_3_class_classification_tiny_gnn.py
 
@@ -26,10 +26,10 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GraphConv
 
-from mldmx.datasets.graph_builder import build_knn_graph
-from mldmx.datasets.tensorize import tensorize_ecal_node_classification
-from mldmx.io.root_reader import read_ecal_rechits_with_truth
-from mldmx.viz.ecal import plot_ecal_hit_classes_3d
+from ml_ldmx.datasets.graph_builder import build_knn_graph
+from ml_ldmx.datasets.tensorize import tensorize_ecal_node_classification
+from ml_ldmx.io.root_reader import read_ecal_rechits_with_truth
+from ml_ldmx.viz.ecal import plot_ecal_hit_classes_3d
 
 
 VALID_LABELS = (1, 2, 3)

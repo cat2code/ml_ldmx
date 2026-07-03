@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
-from mldmx.datasets.graph_builder import build_ecal_tpad_context_graph
+from ml_ldmx.datasets.graph_builder import build_ecal_tpad_context_graph
 
 
 EVENT_FILE_GLOB = "event_*.pt"

@@ -1,4 +1,4 @@
-# MLDMX
+# ml_ldmx
 
 Machine-learning prototypes for LDMX event reconstruction, currently focused on
 assigning ECal RecHits to incoming electrons using ECal information together
@@ -34,10 +34,10 @@ Maintained training entry points are:
 
 ## Setup
 
-Run commands from this `mldmx/` directory unless stated otherwise.
+Run commands from this `ml_ldmx/` directory unless stated otherwise.
 
 ```powershell
-cd mldmx
+cd ml_ldmx
 python -m pip install -e .
 ```
 
@@ -281,8 +281,8 @@ On a SLURM cluster, submit the generic preprocessing job once per independent
 source dataset:
 
 ```bash
-sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/mldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
-sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/mldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
 ```
 
 Quick smoke validation uses temporary shards and leaves no cache behind:
@@ -300,10 +300,9 @@ Cosmos-specific launch notes live in `docs/cosmos_training.md`. The short
 version is:
 
 ```bash
-cd /projects/hep/fs9/shared/ldmx/users/eliotmp/mpetren-msceng-ldmx
+cd /path/to/ml_ldmx
 git pull
 source .venv/bin/activate
-cd mldmx
 python -m pip install -e .
 mkdir -p outputs/slurm
 sbatch other/cosmos_validate_gpu.sbatch
@@ -342,13 +341,13 @@ dataset split, label configuration, and target mode must match the checkpoint.
 ## Project Layout
 
 ```text
-mldmx/
+ml_ldmx/
   data/                         ROOT inputs and processed tensor caches
   outputs/                      Full training run artifacts
   figures/                      Prototype and notebook visualizations
   models/                       Saved weights from earlier simple experiments
   scripts/                      Runnable preprocessing, smoke, and training entry points
-  src/mldmx/
+  src/ml_ldmx/
     io/                         ROOT reading, branch definitions, and artifact writers
     datasets/                   Tensorization, cached datasets, graph construction, preprocessing
     models/                     Transformer and graph neural-network architectures

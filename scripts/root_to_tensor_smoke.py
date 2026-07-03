@@ -3,8 +3,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from mldmx.io.root_reader import RootSource, read_branches, select_collection
-from mldmx.datasets.tensorize import ecal_hits_to_padded_tensor
+from ml_ldmx.io.root_reader import RootSource, read_branches, select_collection
+from ml_ldmx.datasets.tensorize import ecal_hits_to_padded_tensor
 
 """
 First run:

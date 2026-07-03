@@ -15,8 +15,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.cached_views import CachedEventViewDataset
-from mldmx.datasets.ecal_tpad_loading import (
+from ml_ldmx.datasets.cached_views import CachedEventViewDataset
+from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_variable_count_target_mode,
     apply_variable_count_target_mode_to_events,
     filter_noise_tensor_event,
@@ -24,37 +24,37 @@ from mldmx.datasets.ecal_tpad_loading import (
     load_multi_sharded_tensor_events,
     load_processed_or_grouped_root_tensor_events,
 )
-from mldmx.datasets.ecal_tpad_shards import MultiShardedECalTpadDataset, ShardedECalTpadDataset
-from mldmx.datasets.model_views import (
+from ml_ldmx.datasets.ecal_tpad_shards import MultiShardedECalTpadDataset, ShardedECalTpadDataset
+from ml_ldmx.datasets.model_views import (
     ecal_gravnet_view,
     ecal_tpad_gravnet_view,
     ecal_tpad_transformer_view,
     ecal_transformer_view,
 )
-from mldmx.datasets.preprocess import (
+from ml_ldmx.datasets.preprocess import (
     fit_continuous_feature_normalization,
     normalize_continuous_features,
     normalize_event_continuous_features,
 )
-from mldmx.datasets.stats import count_classes, target_order_counts
-from mldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
-from mldmx.io.artifacts import save_config, save_history, save_json
-from mldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
-from mldmx.train.checkpoints import load_checkpoint, save_checkpoint
-from mldmx.train.hit_classifier_baseline import compute_event_losses, train_one_epoch
-from mldmx.train.logging import setup_logging
-from mldmx.train.modeling import count_trainable_parameters
-from mldmx.train.paths import resolve_existing_path, resolve_run_dir
-from mldmx.train.progress import make_progress
-from mldmx.train.run_overview import (
+from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
+from ml_ldmx.io.artifacts import save_config, save_history, save_json
+from ml_ldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
+from ml_ldmx.train.checkpoints import load_checkpoint, save_checkpoint
+from ml_ldmx.train.hit_classifier_baseline import compute_event_losses, train_one_epoch
+from ml_ldmx.train.logging import setup_logging
+from ml_ldmx.train.modeling import count_trainable_parameters
+from ml_ldmx.train.paths import resolve_existing_path, resolve_run_dir
+from ml_ldmx.train.progress import make_progress
+from ml_ldmx.train.run_overview import (
     build_run_overview,
     log_run_overview,
     save_run_overview,
 )
-from mldmx.train.splits import deterministic_split
-from mldmx.train.utils import resolve_device
-from mldmx.viz.ecal import plot_ecal_hit_prediction_errors_3d
-from mldmx.viz.training import plot_confusion_matrix, plot_event_accuracy_overview, plot_history
+from ml_ldmx.train.splits import deterministic_split
+from ml_ldmx.train.utils import resolve_device
+from ml_ldmx.viz.ecal import plot_ecal_hit_prediction_errors_3d
+from ml_ldmx.viz.training import plot_confusion_matrix, plot_event_accuracy_overview, plot_history
 
 
 MODEL_NAMES = ("ECalGravNet", "ECalTpadGravNet", "ECalTransformer", "ECalTpadTransformer")

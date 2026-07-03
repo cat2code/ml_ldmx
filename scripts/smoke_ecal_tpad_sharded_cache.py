@@ -14,15 +14,15 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_loading import apply_variable_count_target_mode, filter_noise_tensor_event
-from mldmx.datasets.ecal_tpad_shards import (
+from ml_ldmx.datasets.ecal_tpad_loading import apply_variable_count_target_mode, filter_noise_tensor_event
+from ml_ldmx.datasets.ecal_tpad_shards import (
     ShardedECalTpadDataset,
     prepare_sharded_tensor_cache,
     validate_sharded_tensor_cache,
 )
-from mldmx.datasets.model_views import ecal_transformer_view
-from mldmx.models import ECalTransformer
-from mldmx.train.hit_classifier_baseline import compute_event_losses
+from ml_ldmx.datasets.model_views import ecal_transformer_view
+from ml_ldmx.models import ECalTransformer
+from ml_ldmx.train.hit_classifier_baseline import compute_event_losses
 
 
 VALID_LABELS = (1, 2, 3)
@@ -158,7 +158,7 @@ def main():
         cache_dir = args.cache_dir if args.cache_dir.is_absolute() else PROJECT_ROOT / args.cache_dir
         run(cache_dir, args)
     else:
-        with TemporaryDirectory(prefix="mldmx_sharded_smoke_") as temporary_dir:
+        with TemporaryDirectory(prefix="ml_ldmx_sharded_smoke_") as temporary_dir:
             run(Path(temporary_dir), args)
 
 

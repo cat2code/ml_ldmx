@@ -11,7 +11,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_shards import (
+from ml_ldmx.datasets.ecal_tpad_shards import (
     ShardedECalTpadDataset,
     prepare_sharded_tensor_cache,
     validate_sharded_tensor_cache,

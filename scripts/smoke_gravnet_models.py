@@ -13,12 +13,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from mldmx.datasets.ecal_tpad_loading import (
+from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_variable_count_target_mode,
     load_processed_tensor_events,
 )
-from mldmx.datasets.model_views import ecal_gravnet_view, ecal_tpad_gravnet_view
-from mldmx.models import ECalGravNet, ECalTpadGravNet
+from ml_ldmx.datasets.model_views import ecal_gravnet_view, ecal_tpad_gravnet_view
+from ml_ldmx.models import ECalGravNet, ECalTpadGravNet
 
 
 DEFAULT_PROCESSED_DIR = PROJECT_ROOT / "data/processed/ecal_tpad_3class_smoke"

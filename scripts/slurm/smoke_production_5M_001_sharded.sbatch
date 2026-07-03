@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=mldmx_shard_smoke
-#SBATCH --output=/projects/hep/fs9/shared/ldmx/users/eliotmp/tensorize_production_5M_001_smoke_%j.out
-#SBATCH --error=/projects/hep/fs9/shared/ldmx/users/eliotmp/tensorize_production_5M_001_smoke_%j.err
+#SBATCH --job-name=ml_ldmx_shard_smoke
+#SBATCH --output=outputs/slurm/%x_%j.out
+#SBATCH --error=outputs/slurm/%x_%j.err
 #SBATCH --time=00:20:00
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
@@ -12,13 +12,14 @@ set -euo pipefail
 # from each electron-count sample and stores only the first 100 events.
 #
 # Submit on Cosmos:
-#   cd /projects/hep/fs9/shared/ldmx/users/eliotmp
-#   sbatch mpetren-msceng-ldmx/mldmx/scripts/slurm/smoke_production_5M_001_sharded.sbatch
+#   cd /path/to/work/ml_ldmx
+#   mkdir -p outputs/slurm
+#   sbatch scripts/slurm/smoke_production_5M_001_sharded.sbatch
 
-WORK_DIR="${WORK_DIR:-/projects/hep/fs9/shared/ldmx/users/eliotmp}"
-REPO_DIR="${REPO_DIR:-${WORK_DIR}/mpetren-msceng-ldmx}"
+REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
+WORK_DIR="${WORK_DIR:-$(dirname "${REPO_DIR}")}"
 DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/mldmx/data/processed/production_5M_001_sharded_smoke}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_5M_001_sharded_smoke}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-100}"
 MAX_ROOT_FILES="${MAX_ROOT_FILES:-1}"
@@ -28,8 +29,8 @@ module purge
 module load GCCcore/13.2.0
 module load Python/3.11.5
 
-if [[ ! -f "${REPO_DIR}/mldmx/scripts/preprocess_ecal_tpad_sharded.py" ]]; then
-  echo "Missing preprocessor in repository: ${REPO_DIR}/mldmx/scripts/preprocess_ecal_tpad_sharded.py" >&2
+if [[ ! -f "${REPO_DIR}/scripts/preprocess_ecal_tpad_sharded.py" ]]; then
+  echo "Missing preprocessor in repository: ${REPO_DIR}/scripts/preprocess_ecal_tpad_sharded.py" >&2
   exit 1
 fi
 
@@ -68,7 +69,7 @@ for electron_count in 2 3; do
 
   echo
   echo "Tensorizing smoke sample ${label}: ${input_dir} -> ${output_dir}"
-  "${PYTHON_BIN}" -u mldmx/scripts/preprocess_ecal_tpad_sharded.py \
+  "${PYTHON_BIN}" -u scripts/preprocess_ecal_tpad_sharded.py \
     --input-root-dir "${input_dir}" \
     --electron-count "${electron_count}" \
     --source-label "${label}" \

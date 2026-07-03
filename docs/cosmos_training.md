@@ -1,6 +1,6 @@
 # Cosmos Training Guide
 
-This guide is for running the maintained MLDMX workflow on Cosmos with
+This guide is for running the maintained ml_ldmx workflow on Cosmos with
 already tensorized ML-ready shards. The normal training path should not read
 ROOT files: it should load processed shards from
 `data/processed/production_5M_001_sharded`.
@@ -10,11 +10,10 @@ ROOT files: it should load processed shards from
 Log in, enter the repository, pull updates, and refresh editable install:
 
 ```bash
-ssh eliotmp@cosmos.lunarc.lu.se
-cd /projects/hep/fs9/shared/ldmx/users/eliotmp/mpetren-msceng-ldmx
+ssh <user>@cosmos.lunarc.lu.se
+cd /path/to/ml_ldmx
 git pull
 source .venv/bin/activate
-cd mldmx
 python -m pip install -e .
 mkdir -p outputs/slurm
 ```

@@ -33,10 +33,10 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from mldmx.io.root_reader import read_events
-from mldmx.datasets.tensorize import tensorize_ecal_event
-from mldmx.datasets.graph_builder import build_knn_graph
-from mldmx.models.simple_gnn import SimpleGNN
+from ml_ldmx.io.root_reader import read_events
+from ml_ldmx.datasets.tensorize import tensorize_ecal_event
+from ml_ldmx.datasets.graph_builder import build_knn_graph
+from ml_ldmx.models.simple_gnn import SimpleGNN
 
 
 def make_dummy_event_label(x: torch.Tensor, energy_index: int = 3, threshold: float = 500.0) -> torch.Tensor:
@@ -57,9 +57,9 @@ def event_to_data(event) -> Data:
 
 def small_io_test():
     from pathlib import Path
-    from mldmx.io.root_reader import read_events
+    from ml_ldmx.io.root_reader import read_events
 
-    events = read_events(Path("mldmx/data/overlay_main10_pileup20_00/events.root"), max_events=2)
+    events = read_events(Path("ml_ldmx/data/overlay_main10_pileup20_00/events.root"), max_events=2)
 
     print(len(events))
     print(events[0].keys())
