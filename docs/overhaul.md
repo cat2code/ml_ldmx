@@ -1,3 +1,5 @@
+This is a historical overhaul prompt log. Some smoke scripts referenced below were later consolidated into `ml_ldmx/tests`.
+
 Below is the final prompt sequence. Run each prompt in a separate Codex task, in order. Do not give Codex the whole sequence at once; each part is intentionally bounded so that the existing working slot-model workflow stays usable throughout the overhaul.
 
 ## Part 1: Document The Reference Architecture And Workflow

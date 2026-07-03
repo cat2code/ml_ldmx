@@ -92,5 +92,5 @@ centroid, pe
 
 ROOT -> awkward arrays -> padded tensor -> tiny NN forward pass
 
-see smoke test in root_to_tensor_smoke.py
+see the current sharded preprocessing smoke coverage in tests/test_sharded_cache_smoke.py
 

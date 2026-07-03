@@ -38,7 +38,7 @@ nvidia-smi
 
 python -u scripts/check_cuda_environment.py
 
-python -u scripts/validate_model_family_common_pipeline.py \
-  --processed-cache-root "${PROCESSED_CACHE_ROOT}" \
-  --events-per-source "${EVENTS_PER_SOURCE}" \
-  --device cuda
+ML_LDMX_PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT}" \
+ML_LDMX_EVENTS_PER_SOURCE="${EVENTS_PER_SOURCE}" \
+ML_LDMX_SMOKE_DEVICE=cuda \
+python -m pytest -q tests/test_model_family_smoke.py

@@ -5,9 +5,9 @@
 This document defines the intended maintained model family and its shared data
 contract. It uses `scripts/train_ecal_tpad_slot_model.py` as the current
 end-to-end reference for ROOT loading, tensorization, training, evaluation,
-checkpointing, and visualization. Existing simple scripts and MLPF-lite code
-remain useful prototypes, but are not the naming or task contract for the
-maintained family.
+checkpointing, and visualization. Earlier simple-classification scripts and MLPF-lite code remain useful as
+design references, but are not the naming or task contract for the maintained
+family.
 
 Initial scope:
 
@@ -237,8 +237,8 @@ does not change event selection or target ordering.
 
 | Code | Status |
 | --- | --- |
-| `scripts/simple_3_class_classification_*.py` | Small focused prototypes, not maintained runners. |
-| `scripts/root_to_tensor_smoke.py` | Early ROOT-to-padded-tensor smoke test. |
+| Historical `simple_3_class_classification_*.py` scripts | Removed focused prototypes; use `scripts/train_hit_classifier_baseline.py` and `tests/test_model_family_smoke.py`. |
+| Historical `root_to_tensor_smoke.py` | Removed early ROOT-to-padded-tensor smoke path; use sharded preprocessing and `tests/test_sharded_cache_smoke.py`. |
 | `scripts/preprocess_ecal_tpad_dataset.py` | Useful prototype preprocessor; lacks the final contract/caching policy. |
 | `scripts/preprocess_dataset.py` | Placeholder. |
 | `scripts/train_ecal_tpad_mlpf_lite_scaled.py` and `src/ml_ldmx/models/ecal_tpad_mlpf_lite.py` | Current scalable two-head experiment and migration reference, not a maintained target model. |
@@ -247,8 +247,8 @@ does not change event selection or target ordering.
 | `src/ml_ldmx/models/simple_gnn.py`, `src/ml_ldmx/train/train_tiny_gnn.py` | Infrastructure/dummy event-classification prototype. |
 
 `scripts/train_hit_classifier_baseline.py` is the maintained entry point for
-the four baseline classifiers and supersedes the simple classification scripts
-for comparison experiments without deleting those prototype references.
+the four baseline classifiers and supersedes the removed simple classification
+prototype scripts for comparison experiments.
 
 ## Performance Guidance
 

@@ -48,31 +48,44 @@ uproot, awkward, NumPy, and Matplotlib.
 
 ## Quick Start
 
-Run a forward/backward smoke test of the current slot model:
+Run the reusable smoke and unit tests from the repository root:
 
-```powershell
-python scripts/smoke_ecal_tpad_slot_model.py --max-events 3 --device cpu
+```bash
+python -m pytest tests -q
 ```
 
-The smoke test first looks for processed events in
-`data/processed/ecal_tpad_3class_smoke/`; if they are unavailable it reads from
-the `2e` and `3e` ROOT directories.
+For the standard library runner, use:
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py'
+```
+
+The fast model-family smoke test first looks for processed events in
+`data/processed/ecal_tpad_3class_smoke/`; if that directory is unavailable, set
+`ML_LDMX_SMOKE_PROCESSED_DIR` to another tiny processed cache.
 
 ## Maintained Model Validation
 
 Validate that all five maintained models consume the same canonical combined
 event pipeline and canonical-y target convention:
 
-```powershell
-python scripts/validate_model_family_common_pipeline.py
+```bash
+python -m pytest tests/test_model_family_smoke.py -q
 ```
 
-The validation defaults to `data/processed/ecal_tpad_3class_smoke/`, runs only
-CPU forward/backward checks, and writes no checkpoints or plots. It reports
-whether the input preprocessing retained noise hits; the default smoke cache
-filters noise, so it does not validate the slot model's noise/background task.
-The two GravNet checks additionally require the PyTorch Geometric
-`torch-cluster` runtime dependency in the active environment.
+To validate against a sharded production-style cache, point the test at the
+cache root and choose the device explicitly:
+
+```bash
+ML_LDMX_PROCESSED_CACHE_ROOT=data/processed/production_5M_001_sharded \
+ML_LDMX_EVENTS_PER_SOURCE=10 \
+ML_LDMX_SMOKE_DEVICE=cpu \
+python -m pytest tests/test_model_family_smoke.py -q
+```
+
+The model-family smoke runs forward/backward checks and writes no checkpoints
+or plots. The two GravNet checks require the PyTorch Geometric `torch-cluster`
+runtime dependency in the active environment.
 
 ### Slot Noise Experiment
 
@@ -98,10 +111,10 @@ The slot trainer rejects the legacy `--keep-noise` option because it does not
 supply background labels and can fail on flagged hits without contribution
 truth; use `--supervise-noise` explicitly.
 
-Run the focused CPU target/loss validation with:
+Run the focused optional ROOT-backed target/loss validation with:
 
-```powershell
-python scripts/smoke_ecal_tpad_slot_noise.py
+```bash
+ML_LDMX_ROOT_DATA=data/ldmx_overlay_events_700k python -m pytest tests/test_slot_model_noise_smoke.py -q
 ```
 
 ### Baseline Training
@@ -133,10 +146,9 @@ python scripts/train_hit_classifier_baseline.py `
   --device cpu
 ```
 
-This runner supersedes `scripts/simple_3_class_classification_*.py` for
-maintained baseline experiments; those older scripts remain as prototype
-references. GravNet models require the PyTorch Geometric `torch-cluster`
-runtime dependency.
+This runner supersedes the old `simple_3_class_classification_*.py`
+prototypes for maintained baseline experiments. GravNet models require the
+PyTorch Geometric `torch-cluster` runtime dependency.
 
 ### Pipeline Benchmarking
 
@@ -285,10 +297,13 @@ sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events
 sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
 ```
 
-Quick smoke validation uses temporary shards and leaves no cache behind:
+Quick ROOT-backed sharded smoke validation uses temporary shards and leaves no cache behind:
 
-```powershell
-python scripts/smoke_ecal_tpad_sharded_cache.py --device cpu --max-root-files 2 --max-events-per-root-file 10
+```bash
+ML_LDMX_ROOT_DATA=data/ldmx_overlay_events_700k \
+ML_LDMX_SHARD_SMOKE_MAX_ROOT_FILES=2 \
+ML_LDMX_SHARD_SMOKE_MAX_EVENTS_PER_ROOT_FILE=10 \
+python -m pytest tests/test_sharded_cache_smoke.py -q
 ```
 
 The one-event-per-file processed format remains supported for existing small
@@ -318,10 +333,16 @@ that mode `EVENTS_PER_SOURCE` is the total number of events used. For example:
 sbatch --export=ALL,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,RUN_NAME=tpad_gravnet_3e_100k other/cosmos_train_baseline.sbatch
 ```
 
-For a minimal ROOT-to-tensor inspection path:
+For a minimal ROOT-to-tensor inspection path, run the sharded preprocessor on one small source sample:
 
-```powershell
-python scripts/root_to_tensor_smoke.py path/to/events.root --stop 10
+```bash
+python scripts/preprocess_ecal_tpad_sharded.py \
+  --input-root-dir path/to/3e/events \
+  --electron-count 3 \
+  --source-label 3e \
+  --output-dir /tmp/ml_ldmx_one_file_shards \
+  --max-root-files 1 \
+  --max-events-per-root-file 10
 ```
 
 ## Training Outputs
@@ -346,7 +367,8 @@ ml_ldmx/
   outputs/                      Full training run artifacts
   figures/                      Prototype and notebook visualizations
   models/                       Saved weights from earlier simple experiments
-  scripts/                      Runnable preprocessing, smoke, and training entry points
+  scripts/                      Runnable preprocessing, training, benchmark, and cluster entry points
+  tests/                       Reusable unit and smoke regression tests
   src/ml_ldmx/
     io/                         ROOT reading, branch definitions, and artifact writers
     datasets/                   Tensorization, cached datasets, graph construction, preprocessing
@@ -356,7 +378,7 @@ ml_ldmx/
     viz/                        Training, ECal, fraction, and event-level plots
 ```
 
-Older `simple_3_class_classification_*.py` scripts remain useful as focused
-prototypes for ECal-only, ECal/TriggerPad transformer, and graph baselines. The
+The older simple-classification prototype scripts have been removed from
+`scripts/`; use the maintained baseline runner and the tests instead. The
 slot-model and scaled MLPF-lite scripts contain the current end-to-end training
 workflows.
