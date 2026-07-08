@@ -10,6 +10,22 @@ Current implementation is simple and readable, not yet optimized.
 """
 
 
+ECAL_ENERGY_TRANSFORMS = ("raw", "log1p")
+
+
+def transform_ecal_energy(energy, mode="raw"):
+    """Apply the configured reconstructed-energy input transform."""
+    if mode not in ECAL_ENERGY_TRANSFORMS:
+        raise ValueError(
+            f"Unknown ECal energy transform {mode!r}; expected one of {ECAL_ENERGY_TRANSFORMS}."
+        )
+    if mode == "raw":
+        return energy
+    if mode == "log1p":
+        return torch.log1p(energy.clamp_min(0.0))
+    raise AssertionError(f"Unhandled ECal energy transform: {mode}")
+
+
 def _as_tensor(values, dtype):
     if isinstance(values, torch.Tensor):
         return values.to(dtype=dtype)
@@ -32,7 +48,7 @@ def _as_1d_float_tensor(values):
     return torch.as_tensor(array.reshape(-1), dtype=torch.float32)
 
 
-def tensorize_ecal_event(event):
+def tensorize_ecal_event(event, ecal_energy_transform="raw"):
     """
     Return:
       x   : [N, F]
@@ -41,7 +57,10 @@ def tensorize_ecal_event(event):
     x_vals = _as_tensor(event["x"], torch.float32)
     y_vals = _as_tensor(event["y"], torch.float32)
     z_vals = _as_tensor(event["z"], torch.float32)
-    e_vals = _as_tensor(event["energy"], torch.float32)
+    e_vals = transform_ecal_energy(
+        _as_tensor(event["energy"], torch.float32),
+        mode=ecal_energy_transform,
+    )
 
     pos = torch.stack([x_vals, y_vals, z_vals], dim=1)
     x = torch.stack([x_vals, y_vals, z_vals, e_vals], dim=1)
@@ -236,8 +255,9 @@ def tensorize_ecal_node_classification(
     valid_labels=(1, 2, 3),
     filter_noise=True,
     supervise_noise=False,
+    ecal_energy_transform="raw",
 ):
-    x, pos = tensorize_ecal_event(event)
+    x, pos = tensorize_ecal_event(event, ecal_energy_transform=ecal_energy_transform)
     labels = dominant_origin_class_labels(
         event,
         valid_labels=valid_labels,
@@ -291,12 +311,16 @@ def tensorize_ecal_with_triggerpad_context(
     valid_labels=(1, 2, 3),
     filter_noise=True,
     supervise_noise=False,
+    ecal_energy_transform="raw",
 ):
     """
     Build one ECal + TriggerPadTracks node tensor for context-aware models.
 
     Combined features are:
         [is_ecal, is_tpad] + [ecal_x, ecal_y, ecal_z, ecal_energy] + [tpad_centroid, tpad_pe]
+
+    ``ecal_energy_transform`` controls only the reconstructed ECal energy input
+    feature. Truth deposited-energy targets remain in physical units.
 
     Labels are returned only for selected ECal nodes. TriggerPadTracks nodes are
     context tokens/nodes and should be masked out of the supervised loss.
@@ -307,6 +331,7 @@ def tensorize_ecal_with_triggerpad_context(
         valid_labels=valid_labels,
         filter_noise=filter_noise,
         supervise_noise=supervise_noise,
+        ecal_energy_transform=ecal_energy_transform,
     )
     tpad = tensorize_trigger_pad_tracks(event)
 
@@ -362,7 +387,7 @@ def tensorize_ecal_with_triggerpad_context(
     return tensors
 
 
-def ecal_hits_to_padded_tensor(arrays, vector_branches, max_hits=256):
+def ecal_hits_to_padded_tensor(arrays, vector_branches, max_hits=256, ecal_energy_transform="raw"):
     x = arrays[vector_branches["x"]]
     y = arrays[vector_branches["y"]]
     z = arrays[vector_branches["z"]]
@@ -376,7 +401,10 @@ def ecal_hits_to_padded_tensor(arrays, vector_branches, max_hits=256):
         xi = ak.to_numpy(x[i])
         yi = ak.to_numpy(y[i])
         zi = ak.to_numpy(z[i])
-        ei = ak.to_numpy(e[i])
+        ei = transform_ecal_energy(
+            torch.as_tensor(ak.to_numpy(e[i]), dtype=torch.float32),
+            mode=ecal_energy_transform,
+        ).numpy()
 
         n_hits = min(len(xi), max_hits)
         if n_hits == 0:

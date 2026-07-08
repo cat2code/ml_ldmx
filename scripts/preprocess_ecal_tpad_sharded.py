@@ -42,6 +42,12 @@ def parse_args():
     )
     parser.add_argument("--read-step-size", type=int, default=500)
     parser.add_argument(
+        "--ecal-energy-transform",
+        choices=("raw", "log1p"),
+        default="raw",
+        help="Transform the reconstructed ECal energy input feature before storing tensors.",
+    )
+    parser.add_argument(
         "--filter-noise",
         action="store_true",
         help="Discard noise hits in the stored shards. By default shards retain explicit noise targets for later training-time policy.",
@@ -96,6 +102,7 @@ def main():
         "Stored noise policy: %s",
         "retain flagged hits with explicit background targets" if store_noise_targets else "discard flagged hits",
     )
+    logger.info("ECal reconstructed-energy input transform: %s", args.ecal_energy_transform)
     prepare_sharded_tensor_cache(
         output_dir,
         root_specs=root_specs,
@@ -109,6 +116,7 @@ def main():
         read_step_size=read_step_size,
         skip_failed_root_files=args.skip_failed_root_files,
         resume_from_root_index=args.resume_from_root_index,
+        ecal_energy_transform=args.ecal_energy_transform,
         logger=logger,
     )
     _manifest, index = validate_sharded_tensor_cache(output_dir, load_shards=True)

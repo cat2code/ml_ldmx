@@ -5,6 +5,8 @@ assigning ECal RecHits to incoming electrons using ECal information together
 with TriggerPadTracks context. The newer pipelines are MLPF-inspired
 transformer models that operate on variable-length event tokens.
 
+![GNN Illustration](assets/data_pipeline.jpg)
+
 ## Current Focus
 
 The active ECal/TriggerPad workflow reads ROOT events, builds per-event tensor
@@ -16,6 +18,11 @@ Each context-aware event uses an 8-column node feature layout:
 ```text
 [is_ecal, is_tpad, ecal_x, ecal_y, ecal_z, ecal_energy, tpad_centroid, tpad_pe]
 ```
+
+`ecal_energy` is the reconstructed ECal RecHit energy input. It is stored raw
+by default; pass `--ecal-energy-transform log1p` during ROOT preprocessing or
+ROOT-backed cache creation to store `log1p(max(ecal_energy, 0))` instead. The
+truth deposited-energy fraction targets are not log-transformed.
 
 ECal nodes receive supervised targets; TriggerPadTracks nodes provide context.
 The default target mode is `canonical-y`, which orders electron targets by
@@ -226,6 +233,8 @@ python scripts/preprocess_ecal_tpad_dataset.py `
 By default noise hits are filtered. Use `--keep-noise` to retain them and
 `--no-edge-index` when only token tensors, rather than saved graph edges, are
 needed.
+Use `--ecal-energy-transform log1p` here when you want the saved tensors to use
+log-scaled reconstructed ECal energy inputs.
 
 ### Scalable Sharded Cache
 
@@ -265,7 +274,10 @@ ROOT files are ordered by numeric suffix (`events_2.root` precedes
 `events_10.root`). Rerunning reuses valid completed shards and fills missing
 ones; pass `--force` to rebuild. Sharded preprocessing retains explicit noise
 targets by default. Use `--filter-noise` only to deliberately write a
-noise-discarding cache.
+noise-discarding cache. The reconstructed ECal energy transform is recorded in
+`manifest.json`; use `--ecal-energy-transform log1p` to create a log-energy
+cache, and pass the same option to training when the trainer creates or
+validates caches.
 
 The current trainer interface can consume one sharded cache corresponding to
 its configured training dataset directly, or a root directory containing

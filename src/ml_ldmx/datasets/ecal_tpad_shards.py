@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 from ml_ldmx.io.root_files import find_root_files
 from ml_ldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
+from ml_ldmx.datasets.tensorize import ECAL_ENERGY_TRANSFORMS
 
 
 SHARD_CACHE_SCHEMA_VERSION = 1
@@ -75,7 +76,13 @@ def _cache_spec(
     filter_noise,
     supervise_noise,
     max_events_per_root_file,
+    ecal_energy_transform="raw",
 ):
+    if ecal_energy_transform not in ECAL_ENERGY_TRANSFORMS:
+        raise ValueError(
+            f"Unknown ECal energy transform {ecal_energy_transform!r}; "
+            f"expected one of {ECAL_ENERGY_TRANSFORMS}."
+        )
     return {
         "reader": "ecal_tpad_sharded",
         "schema_version": SHARD_CACHE_SCHEMA_VERSION,
@@ -83,10 +90,21 @@ def _cache_spec(
         "valid_labels": list(valid_labels),
         "filter_noise": bool(filter_noise),
         "supervise_noise": bool(supervise_noise),
+        "ecal_energy_transform": ecal_energy_transform,
         "stored_target_mode": "physical-origin",
         "max_events_per_root_file": max_events_per_root_file,
         "feature_layout": FEATURE_LAYOUT,
     }
+
+
+def _normalized_cache_spec(spec):
+    spec = dict(spec or {})
+    spec.setdefault("ecal_energy_transform", "raw")
+    return spec
+
+
+def _cache_specs_match(actual, requested):
+    return _normalized_cache_spec(actual) == _normalized_cache_spec(requested)
 
 
 def _load_json(path):
@@ -106,6 +124,7 @@ def validate_sharded_cache_request(
     supervise_noise=False,
     max_root_files=None,
     max_events_per_root_file=None,
+    ecal_energy_transform="raw",
 ):
     """Require an existing cache to correspond to the requested raw dataset/settings."""
     manifest = _load_json(Path(cache_dir) / "manifest.json")
@@ -115,8 +134,9 @@ def validate_sharded_cache_request(
         filter_noise=filter_noise,
         supervise_noise=supervise_noise,
         max_events_per_root_file=max_events_per_root_file,
+        ecal_energy_transform=ecal_energy_transform,
     )
-    if manifest.get("cache_spec") != requested_spec:
+    if not _cache_specs_match(manifest.get("cache_spec"), requested_spec):
         raise ValueError(
             f"Existing sharded cache does not match requested ROOT inputs/settings: {cache_dir}. "
             "Choose a different --processed-cache or pass --force-sharded-cache."
@@ -197,6 +217,7 @@ def prepare_sharded_tensor_cache(
     read_step_size=500,
     skip_failed_root_files=False,
     resume_from_root_index=1,
+    ecal_energy_transform="raw",
     logger=None,
 ):
     """Create or resume a one-ROOT-file-per-shard canonical tensor cache."""
@@ -217,13 +238,14 @@ def prepare_sharded_tensor_cache(
         filter_noise=filter_noise,
         supervise_noise=supervise_noise,
         max_events_per_root_file=max_events_per_root_file,
+        ecal_energy_transform=ecal_energy_transform,
     )
     manifest_path = cache_dir / "manifest.json"
     index_path = cache_dir / "index.json"
 
     if manifest_path.exists() and not force:
         manifest = _load_json(manifest_path)
-        if manifest.get("cache_spec") != spec:
+        if not _cache_specs_match(manifest.get("cache_spec"), spec):
             raise ValueError(
                 f"Existing sharded cache metadata does not match requested ROOT inputs/settings: {cache_dir}. "
                 "Choose a different --processed-cache or pass --force-sharded-cache."
@@ -238,6 +260,7 @@ def prepare_sharded_tensor_cache(
         "feature_layout": FEATURE_LAYOUT,
         "filter_noise": bool(filter_noise),
         "supervise_noise": bool(supervise_noise),
+        "ecal_energy_transform": ecal_energy_transform,
         "valid_labels": list(valid_labels),
     }
     _write_json(manifest_path, manifest)
@@ -309,6 +332,7 @@ def prepare_sharded_tensor_cache(
                         target_mode="physical-origin",
                         filter_noise=filter_noise,
                         supervise_noise=supervise_noise,
+                        ecal_energy_transform=ecal_energy_transform,
                     )
                     attach_root_source_metadata(
                         event,

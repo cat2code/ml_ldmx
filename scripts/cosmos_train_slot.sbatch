@@ -27,6 +27,7 @@ SEED="${SEED:-7}"
 SUPERVISE_NOISE="${SUPERVISE_NOISE:-0}"
 RUN_NAME="${RUN_NAME:-slot_${EVENTS_PER_SOURCE}per_source_${SLURM_JOB_ID:-manual}}"
 RESUME="${RESUME:-}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-raw}"
 
 module purge
 module load GCCcore/13.2.0
@@ -42,6 +43,7 @@ echo "repo: ${REPO_ROOT}"
 echo "processed cache root: ${PROCESSED_CACHE_ROOT}"
 echo "events per source: ${EVENTS_PER_SOURCE}"
 echo "supervise noise: ${SUPERVISE_NOISE}"
+echo "ECal energy transform: ${ECAL_ENERGY_TRANSFORM}"
 python --version
 nvidia-smi
 python -u scripts/check_cuda_environment.py
@@ -59,6 +61,7 @@ cmd=(
   --num-heads "${NUM_HEADS}"
   --dropout "${DROPOUT}"
   --seed "${SEED}"
+  --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}"
   --device cuda
   --output-root "${OUTPUT_ROOT}"
   --run-name "${RUN_NAME}"

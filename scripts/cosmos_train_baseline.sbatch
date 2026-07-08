@@ -29,6 +29,7 @@ DIM_FEEDFORWARD="${DIM_FEEDFORWARD:-128}"
 DROPOUT="${DROPOUT:-0.1}"
 SEED="${SEED:-7}"
 RESUME="${RESUME:-}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-raw}"
 
 if [[ -n "${SOURCE_LABEL}" ]]; then
   case "${SOURCE_LABEL}" in
@@ -62,6 +63,7 @@ echo "repo: ${REPO_ROOT}"
 echo "model: ${MODEL}"
 echo "processed cache root: ${PROCESSED_CACHE_ROOT}"
 echo "events per source: ${EVENTS_PER_SOURCE}"
+echo "ECal energy transform: ${ECAL_ENERGY_TRANSFORM}"
 if [[ -n "${SOURCE_LABEL}" ]]; then
   echo "single source: ${SOURCE_LABEL} (${ELECTRON_COUNT} electrons)"
 fi
@@ -83,6 +85,7 @@ cmd=(
   --dim-feedforward "${DIM_FEEDFORWARD}"
   --dropout "${DROPOUT}"
   --seed "${SEED}"
+  --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}"
   --device cuda
   --output-root "${OUTPUT_ROOT}"
   --run-name "${RUN_NAME}"

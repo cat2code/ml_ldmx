@@ -19,6 +19,7 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-raw}"
 
 mkdir -p outputs/slurm
 
@@ -28,4 +29,5 @@ mkdir -p outputs/slurm
   --source-label "${SOURCE_LABEL}" \
   --output-dir "${OUTPUT_DIR}" \
   --read-step-size "${READ_STEP_SIZE}" \
+  --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}" \
   --skip-existing

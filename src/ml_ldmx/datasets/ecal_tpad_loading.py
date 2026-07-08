@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 
 from ml_ldmx.datasets.tensorize import (
+    ECAL_ENERGY_TRANSFORMS,
     origin_energy_fraction_targets,
     tensorize_ecal_with_triggerpad_context,
 )
@@ -224,12 +225,14 @@ def ecal_tpad_event_to_tensors(
     target_mode="physical-origin",
     filter_noise=True,
     supervise_noise=False,
+    ecal_energy_transform="raw",
 ):
     tensors = tensorize_ecal_with_triggerpad_context(
         event,
         valid_labels=valid_labels,
         filter_noise=filter_noise,
         supervise_noise=supervise_noise,
+        ecal_energy_transform=ecal_energy_transform,
     )
     tensors["event_idx"] = event_idx
     tensors["fraction_target"] = origin_energy_fraction_targets(
@@ -292,6 +295,7 @@ def load_or_create_sharded_tensor_events(
     allow_incomplete_cache=False,
     logger=None,
     read_step_size=500,
+    ecal_energy_transform="raw",
 ):
     """Reuse or create an ML-ready sharded cache and return its lazy dataset."""
     logger = logger or logging.getLogger(__name__)
@@ -306,6 +310,7 @@ def load_or_create_sharded_tensor_events(
             supervise_noise=supervise_noise,
             max_root_files=max_root_files,
             max_events_per_root_file=max_events_per_root_file,
+            ecal_energy_transform=ecal_energy_transform,
         )
         try:
             validate_sharded_tensor_cache(
@@ -328,6 +333,7 @@ def load_or_create_sharded_tensor_events(
             max_root_files=max_root_files,
             max_events_per_root_file=max_events_per_root_file,
             read_step_size=read_step_size,
+            ecal_energy_transform=ecal_energy_transform,
             logger=logger,
         )
     elif allow_incomplete_cache:
@@ -345,11 +351,12 @@ def load_or_create_sharded_tensor_events(
         "valid_labels": list(valid_labels),
         "filter_noise": bool(filter_noise),
         "supervise_noise": bool(supervise_noise),
+        "ecal_energy_transform": ecal_energy_transform,
     }
     mismatches = {
         key: (manifest_spec.get(key), value)
         for key, value in requested.items()
-        if manifest_spec.get(key) != value
+        if manifest_spec.get(key, "raw" if key == "ecal_energy_transform" else None) != value
     }
     if mismatches:
         raise ValueError(
@@ -366,6 +373,7 @@ def load_multi_sharded_tensor_events(
     shard_cache_size=1,
     allow_incomplete_cache=False,
     logger=None,
+    ecal_energy_transform="raw",
 ):
     """Load multiple existing sharded caches as one lazy event dataset."""
     logger = logger or logging.getLogger(__name__)
@@ -378,6 +386,12 @@ def load_multi_sharded_tensor_events(
             shard_cache_size=shard_cache_size,
             allow_incomplete=allow_incomplete_cache,
         )
+        cache_transform = dataset.metadata.get("cache_spec", {}).get("ecal_energy_transform", "raw")
+        if cache_transform != ecal_energy_transform:
+            raise ValueError(
+                f"Sharded cache {cache_dir} stores ecal_energy_transform={cache_transform!r}, "
+                f"but {ecal_energy_transform!r} was requested."
+            )
         sources.append(
             {
                 "electron_count": int(electron_count),
@@ -454,6 +468,7 @@ def load_ecal_tpad_tensor_events(
     disable_progress=False,
     event_log_every=0,
     read_step_size=500,
+    ecal_energy_transform="raw",
 ):
     """
     Load labelled ECal + TriggerPadTracks ROOT events and tensorize them.
@@ -503,6 +518,7 @@ def load_ecal_tpad_tensor_events(
             target_mode=target_mode,
             filter_noise=filter_noise,
             supervise_noise=supervise_noise,
+            ecal_energy_transform=ecal_energy_transform,
         )
         selected_events.append(tensor_event)
         event_sources.append(
@@ -547,6 +563,7 @@ def load_grouped_root_tensor_events(
     disable_progress=False,
     event_log_every=0,
     read_step_size=500,
+    ecal_energy_transform="raw",
 ):
     """
     Load multiple labelled ROOT source groups into the canonical combined form.
@@ -586,6 +603,7 @@ def load_grouped_root_tensor_events(
             disable_progress=disable_progress,
             event_log_every=event_log_every,
             read_step_size=read_step_size,
+            ecal_energy_transform=ecal_energy_transform,
         )
         for event, source in zip(loaded_events, sources):
             global_event_idx = len(events)
@@ -627,6 +645,7 @@ def load_processed_or_grouped_root_tensor_events(
     read_step_size=500,
     shard_cache_size=1,
     allow_incomplete_sharded_cache=False,
+    ecal_energy_transform="raw",
 ):
     """
     Select an existing processed canonical dataset or build events from ROOT groups.
@@ -637,6 +656,11 @@ def load_processed_or_grouped_root_tensor_events(
     processed directories.
     """
     logger = logger or logging.getLogger(__name__)
+    if ecal_energy_transform not in ECAL_ENERGY_TRANSFORMS:
+        raise ValueError(
+            f"Unknown ECal energy transform {ecal_energy_transform!r}; "
+            f"expected one of {ECAL_ENERGY_TRANSFORMS}."
+        )
     processed_dir = Path(processed_dir)
     if has_sharded_tensor_cache(processed_dir):
         logger.info("Using sharded processed tensor dataset: %s", processed_dir)
@@ -646,6 +670,12 @@ def load_processed_or_grouped_root_tensor_events(
             shard_cache_size=shard_cache_size,
             allow_incomplete=allow_incomplete_sharded_cache,
         )
+        cache_transform = dataset.metadata.get("cache_spec", {}).get("ecal_energy_transform", "raw")
+        if cache_transform != ecal_energy_transform:
+            raise ValueError(
+                f"Processed sharded dataset {processed_dir} stores "
+                f"ecal_energy_transform={cache_transform!r}, but {ecal_energy_transform!r} was requested."
+            )
         logger.info("Shard cache configuration: %s", dataset.cache_info())
         return dataset, dataset, processed_dir, dataset.root_files
 
@@ -656,6 +686,16 @@ def load_processed_or_grouped_root_tensor_events(
                 "existing processed events do not contain noise targets."
             )
         logger.info("Using processed tensor dataset: %s", processed_dir)
+        metadata = ECalTriggerPadTensorDataset(processed_dir).metadata
+        stored_transform = metadata.get(
+            "ecal_energy_transform",
+            metadata.get("cache_spec", {}).get("ecal_energy_transform", "raw"),
+        )
+        if stored_transform != ecal_energy_transform:
+            raise ValueError(
+                f"Processed tensor dataset {processed_dir} stores "
+                f"ecal_energy_transform={stored_transform!r}, but {ecal_energy_transform!r} was requested."
+            )
         events, event_sources = load_processed_tensor_events(
             processed_dir,
             max_events=max_processed_events,
@@ -681,5 +721,6 @@ def load_processed_or_grouped_root_tensor_events(
         disable_progress=disable_progress,
         event_log_every=event_log_every,
         read_step_size=read_step_size,
+        ecal_energy_transform=ecal_energy_transform,
     )
     return events, event_sources, root_data_dir, root_files

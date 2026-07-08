@@ -121,6 +121,15 @@ def parse_args():
     parser.add_argument("--plateau-patience", type=int, default=3)
     parser.add_argument("--plateau-factor", type=float, default=0.5)
     parser.add_argument("--no-normalize-features", action="store_true")
+    parser.add_argument(
+        "--ecal-energy-transform",
+        choices=("raw", "log1p"),
+        default="raw",
+        help=(
+            "Transform the reconstructed ECal energy input feature during ROOT preprocessing. "
+            "The value is included in the tensor-cache signature."
+        ),
+    )
     parser.add_argument("--keep-noise", action="store_true")
     parser.add_argument("--num-plot-hits", type=int, default=20000)
     parser.add_argument("--no-progress", action="store_true")
@@ -180,6 +189,7 @@ def tensor_cache_spec(args, data_dir, root_files):
         "valid_labels": [int(label) for label in args.valid_labels],
         "target_mode": args.target_mode,
         "filter_noise": bool(filter_noise),
+        "ecal_energy_transform": args.ecal_energy_transform,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     signature = hashlib.sha256(encoded).hexdigest()[:16]
@@ -239,7 +249,7 @@ def load_cached_tensor_events(cache_dir, logger):
     return events, event_sources
 
 
-def write_tensor_cache(cache_dir, events, event_sources, spec, signature, elapsed_sec, logger):
+def write_tensor_cache(cache_dir, events, event_sources, spec, signature, elapsed_sec, args, logger):
     cache_dir.mkdir(parents=True, exist_ok=True)
     event_files = []
     for event_idx, event in enumerate(events):
@@ -252,6 +262,7 @@ def write_tensor_cache(cache_dir, events, event_sources, spec, signature, elapse
         "num_events": len(event_files),
         "event_sources": _json_ready(event_sources),
         "preprocess_elapsed_sec": float(elapsed_sec),
+        "ecal_energy_transform": args.ecal_energy_transform,
         "feature_layout": [
             "is_ecal",
             "is_tpad",
@@ -293,6 +304,7 @@ def load_tensor_events(args, data_dir, root_files, logger):
         disable_progress=args.no_progress,
         event_log_every=args.event_log_every,
         read_step_size=read_step_size,
+        ecal_energy_transform=args.ecal_energy_transform,
     )
     preprocess_elapsed = time.perf_counter() - preprocess_start
     logger.info(
@@ -308,6 +320,7 @@ def load_tensor_events(args, data_dir, root_files, logger):
         spec=spec,
         signature=signature,
         elapsed_sec=preprocess_elapsed,
+        args=args,
         logger=logger,
     )
     return (events, event_sources), cache_dir

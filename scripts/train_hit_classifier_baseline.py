@@ -157,6 +157,15 @@ def parse_args():
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--no-normalize-features", action="store_true")
     parser.add_argument(
+        "--ecal-energy-transform",
+        choices=("raw", "log1p"),
+        default="raw",
+        help=(
+            "Transform the reconstructed ECal energy input feature during ROOT preprocessing. "
+            "Existing processed caches must record the same transform."
+        ),
+    )
+    parser.add_argument(
         "--cache-model-views",
         action="store_true",
         help=(
@@ -252,6 +261,7 @@ def load_events(args, logger):
             shard_cache_size=args.shard_cache_size,
             allow_incomplete_cache=args.allow_incomplete_sharded_cache,
             logger=logger,
+            ecal_energy_transform=args.ecal_energy_transform,
         )
     if args.processed_cache is not None:
         processed_cache = args.processed_cache
@@ -275,6 +285,7 @@ def load_events(args, logger):
             allow_incomplete_cache=args.allow_incomplete_sharded_cache,
             logger=logger,
             read_step_size=read_step_size,
+            ecal_energy_transform=args.ecal_energy_transform,
         )
     processed_dir = resolve_existing_path(args.processed_dir, project_root=PROJECT_ROOT)
     events, event_sources, data_dir, root_files = load_processed_or_grouped_root_tensor_events(
@@ -294,6 +305,7 @@ def load_events(args, logger):
         read_step_size=read_step_size,
         shard_cache_size=args.shard_cache_size,
         allow_incomplete_sharded_cache=args.allow_incomplete_sharded_cache,
+        ecal_energy_transform=args.ecal_energy_transform,
     )
     if isinstance(events, (ShardedECalTpadDataset, MultiShardedECalTpadDataset)):
         logger.info("Training lazily from ML-ready processed shards: %s", data_dir)

@@ -39,6 +39,12 @@ def parse_args():
     parser.add_argument("--k-tpad-to-ecal", type=int, default=16)
     parser.add_argument("--keep-noise", action="store_true")
     parser.add_argument(
+        "--ecal-energy-transform",
+        choices=("raw", "log1p"),
+        default="raw",
+        help="Transform the reconstructed ECal energy input feature before storing tensors.",
+    )
+    parser.add_argument(
         "--no-edge-index",
         action="store_true",
         help="Store node tensors only; graph edges can be rebuilt at training time.",
@@ -63,6 +69,7 @@ def main():
         "Noise handling: "
         + ("filtering out noise hits" if filter_noise else "keeping noise hits")
     )
+    print(f"ECal reconstructed-energy input transform: {args.ecal_energy_transform}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     event_files = []
@@ -75,6 +82,7 @@ def main():
             event,
             valid_labels=VALID_LABELS,
             filter_noise=filter_noise,
+            ecal_energy_transform=args.ecal_energy_transform,
         )
         tensor_event = {
             "x": tensors["x"],
@@ -120,6 +128,7 @@ def main():
             "num_events": len(event_files),
             "valid_labels": list(VALID_LABELS),
             "filter_noise": filter_noise,
+            "ecal_energy_transform": args.ecal_energy_transform,
             "feature_layout": [
                 "is_ecal",
                 "is_tpad",
