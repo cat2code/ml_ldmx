@@ -1,0 +1,25 @@
+--find-links https://data.pyg.org/whl/torch-2.8.0+cpu.html
+
+# Analysis + ROOT IO
+numpy==2.4.2
+pandas==3.0.0
+matplotlib==3.10.8
+uproot==5.7.1
+awkward==2.8.12
+
+# Jupyter
+ipykernel==7.1.0
+ipywidgets==8.1.7
+
+# PyTorch
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+
+# PyTorch Geometric
+torch-geometric==2.7.0
+pyg-lib==0.4.0
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+torch-cluster==1.6.3
+torch-spline-conv==1.2.2
