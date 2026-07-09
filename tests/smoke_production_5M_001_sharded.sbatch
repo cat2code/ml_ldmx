@@ -24,6 +24,8 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-100}"
 MAX_ROOT_FILES="${MAX_ROOT_FILES:-1}"
 MAX_EVENTS_PER_ROOT_FILE="${MAX_EVENTS_PER_ROOT_FILE:-100}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
+TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM:-log1p}"
 
 module purge
 module load GCCcore/13.2.0
@@ -56,6 +58,8 @@ echo "ROOT dataset:    ${DATASET_DIR}"
 echo "Shard output:    ${OUTPUT_ROOT}"
 echo "ROOT files/type: ${MAX_ROOT_FILES}"
 echo "Events/file:     ${MAX_EVENTS_PER_ROOT_FILE}"
+echo "ECal transform:  ${ECAL_ENERGY_TRANSFORM}"
+echo "TPAD PE transform: ${TPAD_PE_TRANSFORM}"
 echo "Python:          $(command -v "${PYTHON_BIN}")"
 echo "Python version:  $("${PYTHON_BIN}" --version 2>&1)"
 echo "Started:         $(date)"
@@ -77,6 +81,8 @@ for electron_count in 2 3; do
     --max-root-files "${MAX_ROOT_FILES}" \
     --max-events-per-root-file "${MAX_EVENTS_PER_ROOT_FILE}" \
     --read-step-size "${READ_STEP_SIZE}" \
+    --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}" \
+    --tpad-pe-transform "${TPAD_PE_TRANSFORM}" \
     --skip-existing
 done
 

@@ -19,10 +19,12 @@ Each context-aware event uses an 8-column node feature layout:
 [is_ecal, is_tpad, ecal_x, ecal_y, ecal_z, ecal_energy, tpad_centroid, tpad_pe]
 ```
 
-`ecal_energy` is the reconstructed ECal RecHit energy input. It is stored raw
-by default; pass `--ecal-energy-transform log1p` during ROOT preprocessing or
-ROOT-backed cache creation to store `log1p(max(ecal_energy, 0))` instead. The
-truth deposited-energy fraction targets are not log-transformed.
+`ecal_energy` is the reconstructed ECal RecHit energy input and `tpad_pe` is
+the TriggerPadTracks photoelectron input. They are stored raw by default in the
+Python CLIs; pass `--ecal-energy-transform log1p --tpad-pe-transform log1p`
+during ROOT preprocessing or ROOT-backed cache creation to store
+`log1p(max(value, 0))` instead. The truth deposited-energy fraction targets are
+not log-transformed.
 
 ECal nodes receive supervised targets; TriggerPadTracks nodes provide context.
 The default target mode is `canonical-y`, which orders electron targets by
@@ -86,6 +88,8 @@ cache root and choose the device explicitly:
 ```bash
 ML_LDMX_PROCESSED_CACHE_ROOT=data/processed/production_5M_001_sharded \
 ML_LDMX_EVENTS_PER_SOURCE=10 \
+ML_LDMX_ECAL_ENERGY_TRANSFORM=log1p \
+ML_LDMX_TPAD_PE_TRANSFORM=log1p \
 ML_LDMX_SMOKE_DEVICE=cpu \
 python -m pytest tests/test_model_family_smoke.py -q
 ```
@@ -233,8 +237,9 @@ python scripts/preprocess_ecal_tpad_dataset.py `
 By default noise hits are filtered. Use `--keep-noise` to retain them and
 `--no-edge-index` when only token tensors, rather than saved graph edges, are
 needed.
-Use `--ecal-energy-transform log1p` here when you want the saved tensors to use
-log-scaled reconstructed ECal energy inputs.
+Use `--ecal-energy-transform log1p --tpad-pe-transform log1p` here when you
+want the saved tensors to use log-scaled reconstructed ECal energy and
+TriggerPadTracks pe inputs.
 
 ### Scalable Sharded Cache
 
@@ -274,10 +279,12 @@ ROOT files are ordered by numeric suffix (`events_2.root` precedes
 `events_10.root`). Rerunning reuses valid completed shards and fills missing
 ones; pass `--force` to rebuild. Sharded preprocessing retains explicit noise
 targets by default. Use `--filter-noise` only to deliberately write a
-noise-discarding cache. The reconstructed ECal energy transform is recorded in
-`manifest.json`; use `--ecal-energy-transform log1p` to create a log-energy
-cache, and pass the same option to training when the trainer creates or
-validates caches.
+noise-discarding cache. The reconstructed ECal energy and TriggerPadTracks pe
+transforms are recorded in `manifest.json`; use
+`--ecal-energy-transform log1p --tpad-pe-transform log1p` to create a log-input
+cache, and pass the same options to training when the trainer creates or
+validates caches. The Cosmos sbatch wrappers default both transforms to
+`log1p`.
 
 The current trainer interface can consume one sharded cache corresponding to
 its configured training dataset directly, or a root directory containing
@@ -287,6 +294,8 @@ separate `2e/events` and `3e/events` caches:
 python scripts/train_hit_classifier_baseline.py `
   --model ECalTpadTransformer `
   --processed-cache-root data/processed/production_5M_001_sharded `
+  --ecal-energy-transform log1p `
+  --tpad-pe-transform log1p `
   --events-per-source 500 `
   --epochs 20 `
   --device cuda
@@ -353,6 +362,8 @@ python scripts/preprocess_ecal_tpad_sharded.py \
   --electron-count 3 \
   --source-label 3e \
   --output-dir /tmp/ml_ldmx_one_file_shards \
+  --ecal-energy-transform log1p \
+  --tpad-pe-transform log1p \
   --max-root-files 1 \
   --max-events-per-root-file 10
 ```

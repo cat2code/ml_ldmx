@@ -31,6 +31,8 @@ DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_5M_001_sharded}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
+TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM:-log1p}"
 RESUME_2E_FROM_ROOT_INDEX="${RESUME_2E_FROM_ROOT_INDEX:-1}"
 RESUME_3E_FROM_ROOT_INDEX="${RESUME_3E_FROM_ROOT_INDEX:-1}"
 
@@ -62,6 +64,8 @@ echo "Work area:     ${WORK_DIR}"
 echo "Repository:    ${REPO_DIR}"
 echo "ROOT dataset:  ${DATASET_DIR}"
 echo "Shard output:  ${OUTPUT_ROOT}"
+echo "ECal transform: ${ECAL_ENERGY_TRANSFORM}"
+echo "TPAD PE transform: ${TPAD_PE_TRANSFORM}"
 echo "Python:        $(command -v "${PYTHON_BIN}")"
 echo "Python version: $("${PYTHON_BIN}" --version 2>&1)"
 echo "Started:       $(date)"
@@ -84,6 +88,8 @@ for electron_count in 2 3; do
     --output-dir "${output_dir}" \
     --resume-from-root-index "${resume_from_root_index}" \
     --read-step-size "${READ_STEP_SIZE}" \
+    --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}" \
+    --tpad-pe-transform "${TPAD_PE_TRANSFORM}" \
     --skip-existing \
     --skip-failed-root-files
 done

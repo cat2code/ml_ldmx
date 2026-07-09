@@ -130,6 +130,15 @@ def parse_args():
             "The value is included in the tensor-cache signature."
         ),
     )
+    parser.add_argument(
+        "--tpad-pe-transform",
+        choices=("raw", "log1p"),
+        default="raw",
+        help=(
+            "Transform the TriggerPadTracks pe input feature during ROOT preprocessing. "
+            "The value is included in the tensor-cache signature."
+        ),
+    )
     parser.add_argument("--keep-noise", action="store_true")
     parser.add_argument("--num-plot-hits", type=int, default=20000)
     parser.add_argument("--no-progress", action="store_true")
@@ -190,6 +199,7 @@ def tensor_cache_spec(args, data_dir, root_files):
         "target_mode": args.target_mode,
         "filter_noise": bool(filter_noise),
         "ecal_energy_transform": args.ecal_energy_transform,
+        "tpad_pe_transform": args.tpad_pe_transform,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     signature = hashlib.sha256(encoded).hexdigest()[:16]
@@ -263,6 +273,7 @@ def write_tensor_cache(cache_dir, events, event_sources, spec, signature, elapse
         "event_sources": _json_ready(event_sources),
         "preprocess_elapsed_sec": float(elapsed_sec),
         "ecal_energy_transform": args.ecal_energy_transform,
+        "tpad_pe_transform": args.tpad_pe_transform,
         "feature_layout": [
             "is_ecal",
             "is_tpad",
@@ -305,6 +316,7 @@ def load_tensor_events(args, data_dir, root_files, logger):
         event_log_every=args.event_log_every,
         read_step_size=read_step_size,
         ecal_energy_transform=args.ecal_energy_transform,
+        tpad_pe_transform=args.tpad_pe_transform,
     )
     preprocess_elapsed = time.perf_counter() - preprocess_start
     logger.info(

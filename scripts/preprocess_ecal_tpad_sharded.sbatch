@@ -19,9 +19,13 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
-ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-raw}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
+TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM:-log1p}"
 
 mkdir -p outputs/slurm
+
+echo "ECal energy transform: ${ECAL_ENERGY_TRANSFORM}"
+echo "TPAD PE transform: ${TPAD_PE_TRANSFORM}"
 
 "${PYTHON_BIN}" scripts/preprocess_ecal_tpad_sharded.py \
   --input-root-dir "${ROOT_DIR}" \
@@ -30,4 +34,5 @@ mkdir -p outputs/slurm
   --output-dir "${OUTPUT_DIR}" \
   --read-step-size "${READ_STEP_SIZE}" \
   --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}" \
+  --tpad-pe-transform "${TPAD_PE_TRANSFORM}" \
   --skip-existing

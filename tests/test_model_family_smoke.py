@@ -99,9 +99,19 @@ def _load_from_sharded_cache(event_index: int) -> tuple[dict, Path]:
     if missing:
         raise unittest.SkipTest(f"Requested sharded cache is incomplete: {missing}")
     events_per_source = _env_int("ML_LDMX_EVENTS_PER_SOURCE", _env_int("EVENTS_PER_SOURCE"))
+    ecal_energy_transform = os.environ.get(
+        "ML_LDMX_ECAL_ENERGY_TRANSFORM",
+        os.environ.get("ECAL_ENERGY_TRANSFORM", "raw"),
+    )
+    tpad_pe_transform = os.environ.get(
+        "ML_LDMX_TPAD_PE_TRANSFORM",
+        os.environ.get("TPAD_PE_TRANSFORM", "raw"),
+    )
     events, _sources, _selected, _root_files = load_multi_sharded_tensor_events(
         sources,
         events_per_source=events_per_source,
+        ecal_energy_transform=ecal_energy_transform,
+        tpad_pe_transform=tpad_pe_transform,
     )
     if event_index >= len(events):
         raise unittest.SkipTest(

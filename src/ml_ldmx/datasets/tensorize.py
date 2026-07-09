@@ -11,6 +11,7 @@ Current implementation is simple and readable, not yet optimized.
 
 
 ECAL_ENERGY_TRANSFORMS = ("raw", "log1p")
+TPAD_PE_TRANSFORMS = ("raw", "log1p")
 
 
 def transform_ecal_energy(energy, mode="raw"):
@@ -24,6 +25,19 @@ def transform_ecal_energy(energy, mode="raw"):
     if mode == "log1p":
         return torch.log1p(energy.clamp_min(0.0))
     raise AssertionError(f"Unhandled ECal energy transform: {mode}")
+
+
+def transform_tpad_pe(pe, mode="raw"):
+    """Apply the configured TriggerPadTracks pe input transform."""
+    if mode not in TPAD_PE_TRANSFORMS:
+        raise ValueError(
+            f"Unknown TriggerPadTracks pe transform {mode!r}; expected one of {TPAD_PE_TRANSFORMS}."
+        )
+    if mode == "raw":
+        return pe
+    if mode == "log1p":
+        return torch.log1p(pe.clamp_min(0.0))
+    raise AssertionError(f"Unhandled TriggerPadTracks pe transform: {mode}")
 
 
 def _as_tensor(values, dtype):
@@ -280,12 +294,13 @@ def tensorize_ecal_node_classification(
     return tensors
 
 
-def tensorize_trigger_pad_tracks(event):
+def tensorize_trigger_pad_tracks(event, tpad_pe_transform="raw"):
     """
     Return TriggerPadTracks context features with shape [N_tpad, 2].
 
     Columns are [centroid, pe]. The centroid_ leaf is treated as the relevant
-    1D y-like coordinate for this detector context.
+    1D y-like coordinate for this detector context. ``tpad_pe_transform``
+    controls only the pe input feature.
     """
 
     trigger_pad_tracks = event.get("trigger_pad_tracks", {})
@@ -293,7 +308,7 @@ def tensorize_trigger_pad_tracks(event):
     pe = trigger_pad_tracks.get("pe", event.get("tpad_pe"))
 
     centroid = _as_1d_float_tensor(centroid)
-    pe = _as_1d_float_tensor(pe)
+    pe = transform_tpad_pe(_as_1d_float_tensor(pe), mode=tpad_pe_transform)
 
     if centroid.numel() == 0 and pe.numel() == 0:
         return torch.empty((0, 2), dtype=torch.float32)
@@ -312,6 +327,7 @@ def tensorize_ecal_with_triggerpad_context(
     filter_noise=True,
     supervise_noise=False,
     ecal_energy_transform="raw",
+    tpad_pe_transform="raw",
 ):
     """
     Build one ECal + TriggerPadTracks node tensor for context-aware models.
@@ -320,6 +336,7 @@ def tensorize_ecal_with_triggerpad_context(
         [is_ecal, is_tpad] + [ecal_x, ecal_y, ecal_z, ecal_energy] + [tpad_centroid, tpad_pe]
 
     ``ecal_energy_transform`` controls only the reconstructed ECal energy input
+    feature. ``tpad_pe_transform`` controls only the TriggerPadTracks pe input
     feature. Truth deposited-energy targets remain in physical units.
 
     Labels are returned only for selected ECal nodes. TriggerPadTracks nodes are
@@ -333,7 +350,7 @@ def tensorize_ecal_with_triggerpad_context(
         supervise_noise=supervise_noise,
         ecal_energy_transform=ecal_energy_transform,
     )
-    tpad = tensorize_trigger_pad_tracks(event)
+    tpad = tensorize_trigger_pad_tracks(event, tpad_pe_transform=tpad_pe_transform)
 
     ecal_x = ecal["x"]
     num_ecal = ecal_x.shape[0]

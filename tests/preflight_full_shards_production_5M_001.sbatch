@@ -22,6 +22,8 @@ DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_5M_001_full_shard_preflight}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
+ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
+TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM:-log1p}"
 
 module purge
 module load GCCcore/13.2.0
@@ -53,6 +55,8 @@ echo "Repository:     ${REPO_DIR}"
 echo "ROOT dataset:   ${DATASET_DIR}"
 echo "Shard output:   ${OUTPUT_ROOT}"
 echo "ROOT files/type: 1 complete file"
+echo "ECal transform: ${ECAL_ENERGY_TRANSFORM}"
+echo "TPAD PE transform: ${TPAD_PE_TRANSFORM}"
 echo "Python:         $(command -v "${PYTHON_BIN}")"
 echo "Python version: $("${PYTHON_BIN}" --version 2>&1)"
 echo "Started:        $(date)"
@@ -73,6 +77,8 @@ for electron_count in 2 3; do
     --output-dir "${output_dir}" \
     --max-root-files 1 \
     --read-step-size "${READ_STEP_SIZE}" \
+    --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}" \
+    --tpad-pe-transform "${TPAD_PE_TRANSFORM}" \
     --skip-existing
 done
 

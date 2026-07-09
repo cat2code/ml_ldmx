@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 
 from ml_ldmx.io.root_files import find_root_files
 from ml_ldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
-from ml_ldmx.datasets.tensorize import ECAL_ENERGY_TRANSFORMS
+from ml_ldmx.datasets.tensorize import ECAL_ENERGY_TRANSFORMS, TPAD_PE_TRANSFORMS
 
 
 SHARD_CACHE_SCHEMA_VERSION = 1
@@ -77,11 +77,17 @@ def _cache_spec(
     supervise_noise,
     max_events_per_root_file,
     ecal_energy_transform="raw",
+    tpad_pe_transform="raw",
 ):
     if ecal_energy_transform not in ECAL_ENERGY_TRANSFORMS:
         raise ValueError(
             f"Unknown ECal energy transform {ecal_energy_transform!r}; "
             f"expected one of {ECAL_ENERGY_TRANSFORMS}."
+        )
+    if tpad_pe_transform not in TPAD_PE_TRANSFORMS:
+        raise ValueError(
+            f"Unknown TriggerPadTracks pe transform {tpad_pe_transform!r}; "
+            f"expected one of {TPAD_PE_TRANSFORMS}."
         )
     return {
         "reader": "ecal_tpad_sharded",
@@ -91,6 +97,7 @@ def _cache_spec(
         "filter_noise": bool(filter_noise),
         "supervise_noise": bool(supervise_noise),
         "ecal_energy_transform": ecal_energy_transform,
+        "tpad_pe_transform": tpad_pe_transform,
         "stored_target_mode": "physical-origin",
         "max_events_per_root_file": max_events_per_root_file,
         "feature_layout": FEATURE_LAYOUT,
@@ -100,6 +107,7 @@ def _cache_spec(
 def _normalized_cache_spec(spec):
     spec = dict(spec or {})
     spec.setdefault("ecal_energy_transform", "raw")
+    spec.setdefault("tpad_pe_transform", "raw")
     return spec
 
 
@@ -125,6 +133,7 @@ def validate_sharded_cache_request(
     max_root_files=None,
     max_events_per_root_file=None,
     ecal_energy_transform="raw",
+    tpad_pe_transform="raw",
 ):
     """Require an existing cache to correspond to the requested raw dataset/settings."""
     manifest = _load_json(Path(cache_dir) / "manifest.json")
@@ -135,6 +144,7 @@ def validate_sharded_cache_request(
         supervise_noise=supervise_noise,
         max_events_per_root_file=max_events_per_root_file,
         ecal_energy_transform=ecal_energy_transform,
+        tpad_pe_transform=tpad_pe_transform,
     )
     if not _cache_specs_match(manifest.get("cache_spec"), requested_spec):
         raise ValueError(
@@ -218,6 +228,7 @@ def prepare_sharded_tensor_cache(
     skip_failed_root_files=False,
     resume_from_root_index=1,
     ecal_energy_transform="raw",
+    tpad_pe_transform="raw",
     logger=None,
 ):
     """Create or resume a one-ROOT-file-per-shard canonical tensor cache."""
@@ -239,6 +250,7 @@ def prepare_sharded_tensor_cache(
         supervise_noise=supervise_noise,
         max_events_per_root_file=max_events_per_root_file,
         ecal_energy_transform=ecal_energy_transform,
+        tpad_pe_transform=tpad_pe_transform,
     )
     manifest_path = cache_dir / "manifest.json"
     index_path = cache_dir / "index.json"
@@ -261,6 +273,7 @@ def prepare_sharded_tensor_cache(
         "filter_noise": bool(filter_noise),
         "supervise_noise": bool(supervise_noise),
         "ecal_energy_transform": ecal_energy_transform,
+        "tpad_pe_transform": tpad_pe_transform,
         "valid_labels": list(valid_labels),
     }
     _write_json(manifest_path, manifest)
@@ -333,6 +346,7 @@ def prepare_sharded_tensor_cache(
                         filter_noise=filter_noise,
                         supervise_noise=supervise_noise,
                         ecal_energy_transform=ecal_energy_transform,
+                        tpad_pe_transform=tpad_pe_transform,
                     )
                     attach_root_source_metadata(
                         event,
