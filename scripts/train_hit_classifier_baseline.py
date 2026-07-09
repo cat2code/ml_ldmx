@@ -687,15 +687,16 @@ def _predicted_display_labels(view, pred_class):
     return torch.tensor(mapped, dtype=torch.long)
 
 
-def plot_representative_validation_predictions(
+def plot_representative_predictions(
     model,
     events_or_views,
     view_fn,
     selection,
     args,
     device,
-    run_dir,
+    output_dir,
     logger,
+    split_name="val",
 ):
     display_records = _representative_display_records(
         selection,
@@ -704,7 +705,8 @@ def plot_representative_validation_predictions(
     if not display_records:
         return []
 
-    output_dir = run_dir / "val_representative_events"
+    split_name = str(split_name)
+    split_title = {"val": "validation"}.get(split_name, split_name)
     output_dir.mkdir(parents=True, exist_ok=True)
     saved_paths = []
     model.eval()
@@ -720,9 +722,9 @@ def plot_representative_validation_predictions(
             if "origin_id_y" in view
             else list(range(len(args.valid_labels)))
         )
-        stem = f"val_{group}_event_{event_idx:04d}"
+        stem = f"{split_name}_{group}_event_{event_idx:04d}"
         title = (
-            f"{args.model} validation {group} event {event_idx}, "
+            f"{args.model} {split_title} {group} event {event_idx}, "
             f"accuracy={record.get('accuracy'):.3f}"
         )
         png_path = output_dir / f"{stem}_prediction_errors.png"
@@ -751,7 +753,12 @@ def plot_representative_validation_predictions(
                 entropy=entropy,
             )
         except ImportError as exc:
-            logger.warning("Skipping interactive validation display for event %s: %s", event_idx, exc)
+            logger.warning(
+                "Skipping interactive %s display for event %s: %s",
+                split_title,
+                event_idx,
+                exc,
+            )
         else:
             saved_paths.append(html_path)
     return saved_paths
@@ -990,15 +997,16 @@ def main():
         metric="accuracy",
     )
     save_json(run_dir / "val_representative_events.json", representative_selection)
-    representative_display_paths = plot_representative_validation_predictions(
+    representative_display_paths = plot_representative_predictions(
         model,
         training_events,
         training_view_fn,
         representative_selection,
         args,
         device,
-        run_dir,
+        run_dir / "val_representative_events",
         logger,
+        split_name="val",
     )
     validation_plot_paths = [run_dir / "val_event_accuracy_overview.png"]
     if val_diagnostic_plot_path.exists():

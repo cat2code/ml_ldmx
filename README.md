@@ -161,6 +161,27 @@ This runner supersedes the old `simple_3_class_classification_*.py`
 prototypes for maintained baseline experiments. GravNet models require the
 PyTorch Geometric `torch-cluster` runtime dependency.
 
+### Inspecting a Saved Baseline Run
+
+Re-run validation diagnostics and create interactive worst/median/best event
+displays from a saved checkpoint without retraining:
+
+```bash
+python scripts/inspect_hit_classifier_run.py \
+  --run-dir outputs/hit_classifier_baseline/my_run \
+  --split val \
+  --num-events 9 \
+  --device auto
+```
+
+The inspector uses `checkpoints/best.pt` by default and writes to
+`<run-dir>/inspection/best/<split>/`. Use `--checkpoint latest.pt` to select
+another checkpoint. For a quick pass over a large split, add
+`--max-inspection-events 1000`. If a run has moved between the cluster and a
+local machine, point it at the relocated data with `--processed-dir`,
+`--processed-cache`, `--processed-cache-root`, or repeated
+`--processed-source` arguments.
+
 ### Pipeline Benchmarking
 
 Measure local IO, adapter, and representative forward/backward throughput

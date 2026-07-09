@@ -2,9 +2,9 @@ import logging
 import sys
 
 
-def setup_logging(run_dir, logger_name="ecal_tpad_mlpf_lite_scaled"):
+def setup_logging(run_dir, logger_name="ecal_tpad_mlpf_lite_scaled", log_filename="train.log"):
     run_dir.mkdir(parents=True, exist_ok=True)
-    log_path = run_dir / "train.log"
+    log_path = run_dir / log_filename
     logger = logging.getLogger(logger_name)
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
