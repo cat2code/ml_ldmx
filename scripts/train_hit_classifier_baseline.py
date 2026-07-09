@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,7 @@ from ml_ldmx.datasets.preprocess import (
     normalize_event_continuous_features,
 )
 from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.eval.event_diagnostics import select_representative_events
 from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
 from ml_ldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
@@ -53,8 +55,16 @@ from ml_ldmx.train.run_overview import (
 )
 from ml_ldmx.train.splits import deterministic_split
 from ml_ldmx.train.utils import resolve_device
-from ml_ldmx.viz.ecal import plot_ecal_hit_prediction_errors_3d
-from ml_ldmx.viz.training import plot_confusion_matrix, plot_event_accuracy_overview, plot_history
+from ml_ldmx.viz.ecal import (
+    plot_ecal_hit_prediction_errors_3d,
+    plot_ecal_hit_prediction_errors_3d_interactive,
+)
+from ml_ldmx.viz.training import (
+    plot_confusion_matrix,
+    plot_event_accuracy_overview,
+    plot_event_diagnostic_correlations,
+    plot_history,
+)
 
 
 MODEL_NAMES = ("ECalGravNet", "ECalTpadGravNet", "ECalTransformer", "ECalTpadTransformer")
@@ -199,6 +209,21 @@ def parse_args():
     )
     parser.add_argument("--no-progress", action="store_true")
     parser.add_argument("--num-ecal-plots", type=int, default=2)
+    parser.add_argument(
+        "--num-diagnostic-event-displays",
+        type=int,
+        default=3,
+        help=(
+            "Number of validation representative events to render after training. "
+            "The default gives one worst, one median-like, and one best event."
+        ),
+    )
+    parser.add_argument(
+        "--event-diagnostic-radius-mm",
+        type=float,
+        default=25.0,
+        help="Centroid-neighborhood radius used in per-event shower-overlap diagnostics.",
+    )
     parser.add_argument("--event-log-every", type=int, default=0)
     parser.add_argument("--read-step-size", type=int, default=500)
     parser.add_argument("--allow-fewer-events", action="store_true")
@@ -220,6 +245,10 @@ def validate_args(args):
         raise ValueError("--model-view-cache-size must be non-negative when provided.")
     if args.checkpoint_every <= 0 or args.read_step_size < 0:
         raise ValueError("--checkpoint-every must be positive and --read-step-size non-negative.")
+    if args.num_ecal_plots < 0 or args.num_diagnostic_event_displays < 0:
+        raise ValueError("--num-ecal-plots and --num-diagnostic-event-displays must be non-negative.")
+    if args.event_diagnostic_radius_mm <= 0:
+        raise ValueError("--event-diagnostic-radius-mm must be positive.")
     if len(args.valid_labels) < 2 or len(set(args.valid_labels)) != len(args.valid_labels):
         raise ValueError("--valid-labels must contain at least two distinct origin labels.")
     if args.hidden_dim % args.num_heads != 0 and "Transformer" in args.model:
@@ -539,7 +568,7 @@ def save_event_accuracy_records(records, run_dir, split_name):
     json_path = run_dir / f"{split_name}_event_accuracy.json"
     csv_path = run_dir / f"{split_name}_event_accuracy.csv"
     save_json(json_path, records)
-    fieldnames = [
+    base_fieldnames = [
         "split_position",
         "event_idx",
         "num_hits",
@@ -553,14 +582,26 @@ def save_event_accuracy_records(records, run_dir, split_name):
         "electron_count",
         "target_label_order",
     ]
+    extra_fieldnames = sorted(
+        {
+            key
+            for record in records
+            for key in record.keys()
+            if key not in base_fieldnames
+        }
+    )
+    fieldnames = base_fieldnames + extra_fieldnames
+
+    def csv_value(value):
+        if isinstance(value, (list, dict)):
+            return json.dumps(value)
+        return value
+
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for record in records:
-            row = record.copy()
-            if isinstance(row.get("target_label_order"), list):
-                row["target_label_order"] = json.dumps(row["target_label_order"])
-            writer.writerow({key: row.get(key) for key in fieldnames})
+            writer.writerow({key: csv_value(record.get(key)) for key in fieldnames})
     return {"json": json_path, "csv": csv_path}
 
 
@@ -588,6 +629,132 @@ def log_worst_event_accuracies(logger, records, split_name, limit=8):
         for record in worst
     ]
     logger.info("Lowest %s event accuracies: %s", split_name, summary)
+
+
+def _representative_display_records(selection, max_total):
+    if max_total <= 0:
+        return []
+    groups = ("worst", "median", "best")
+    group_positions = {group: 0 for group in groups}
+    selected = []
+    seen_event_indices = set()
+    while len(selected) < max_total:
+        made_progress = False
+        for group in groups:
+            records = selection.get(group, [])
+            position = group_positions[group]
+            if position >= len(records):
+                continue
+            group_positions[group] += 1
+            made_progress = True
+            record = records[position]
+            event_idx = int(record["event_idx"])
+            if event_idx in seen_event_indices:
+                continue
+            selected.append((group, record))
+            seen_event_indices.add(event_idx)
+            if len(selected) >= max_total:
+                break
+        if not made_progress:
+            break
+    return selected
+
+
+def _prediction_confidence_and_entropy(logits):
+    logits = logits.detach().cpu()
+    probabilities = F.softmax(logits, dim=1)
+    confidence = probabilities.max(dim=1).values
+    entropy = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=1)
+    if probabilities.shape[1] > 1:
+        entropy = entropy / torch.log(torch.tensor(float(probabilities.shape[1])))
+    return confidence, entropy
+
+
+def _predicted_display_labels(view, pred_class):
+    if "origin_id_y" not in view:
+        return pred_class.detach().cpu()
+    target_label_order = view.get("target_label_order")
+    if target_label_order is None:
+        return pred_class.detach().cpu()
+    if isinstance(target_label_order, torch.Tensor):
+        target_label_order = target_label_order.detach().cpu().tolist()
+    target_label_order = [int(label) for label in target_label_order]
+    pred_class = pred_class.detach().cpu().to(dtype=torch.long)
+    mapped = []
+    for value in pred_class.tolist():
+        value = int(value)
+        mapped.append(target_label_order[value] if 0 <= value < len(target_label_order) else value)
+    return torch.tensor(mapped, dtype=torch.long)
+
+
+def plot_representative_validation_predictions(
+    model,
+    events_or_views,
+    view_fn,
+    selection,
+    args,
+    device,
+    run_dir,
+    logger,
+):
+    display_records = _representative_display_records(
+        selection,
+        max_total=args.num_diagnostic_event_displays,
+    )
+    if not display_records:
+        return []
+
+    output_dir = run_dir / "val_representative_events"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved_paths = []
+    model.eval()
+    for group, record in display_records:
+        event_idx = int(record["event_idx"])
+        losses = compute_event_losses(model, events_or_views[event_idx], view_fn, device)
+        view = losses["view"]
+        logits = losses.get("supervised_logits")
+        confidence, entropy = _prediction_confidence_and_entropy(logits)
+        color_labels = view.get("origin_id_y", losses["true_class"]).detach().cpu()
+        labels = (
+            list(args.valid_labels)
+            if "origin_id_y" in view
+            else list(range(len(args.valid_labels)))
+        )
+        stem = f"val_{group}_event_{event_idx:04d}"
+        title = (
+            f"{args.model} validation {group} event {event_idx}, "
+            f"accuracy={record.get('accuracy'):.3f}"
+        )
+        png_path = output_dir / f"{stem}_prediction_errors.png"
+        plot_ecal_hit_prediction_errors_3d(
+            view["ecal_pos"].detach().cpu(),
+            losses["true_class"].detach().cpu(),
+            losses["pred_class"].detach().cpu(),
+            output_path=png_path,
+            title=title,
+            labels=labels,
+            color_labels=color_labels,
+            legend_title="true origin_id / marker",
+        )
+        saved_paths.append(png_path)
+
+        html_path = output_dir / f"{stem}_interactive.html"
+        try:
+            plot_ecal_hit_prediction_errors_3d_interactive(
+                view["ecal_pos"].detach().cpu(),
+                color_labels,
+                _predicted_display_labels(view, losses["pred_class"]),
+                output_path=html_path,
+                title=title,
+                energy=view.get("ecal_input_energy"),
+                confidence=confidence,
+                entropy=entropy,
+            )
+        except ImportError as exc:
+            logger.warning("Skipping interactive validation display for event %s: %s", event_idx, exc)
+        else:
+            saved_paths.append(html_path)
+    return saved_paths
 
 
 @torch.no_grad()
@@ -811,11 +978,41 @@ def main():
         run_dir / "val_event_accuracy_overview.png",
         f"{args.model} validation event hit accuracy",
     )
+    val_diagnostic_plot_path = run_dir / "val_event_diagnostic_correlations.png"
+    plot_event_diagnostic_correlations(
+        val_event_records,
+        val_diagnostic_plot_path,
+        f"{args.model} validation event diagnostics",
+    )
+    representative_selection = select_representative_events(
+        val_event_records,
+        limit_per_group=max(3, args.num_diagnostic_event_displays),
+        metric="accuracy",
+    )
+    save_json(run_dir / "val_representative_events.json", representative_selection)
+    representative_display_paths = plot_representative_validation_predictions(
+        model,
+        training_events,
+        training_view_fn,
+        representative_selection,
+        args,
+        device,
+        run_dir,
+        logger,
+    )
+    validation_plot_paths = [run_dir / "val_event_accuracy_overview.png"]
+    if val_diagnostic_plot_path.exists():
+        validation_plot_paths.append(val_diagnostic_plot_path)
+    else:
+        logger.info(
+            "Skipped validation diagnostic-correlation plot; need at least two finite events per panel."
+        )
     logger.info(
-        "Saved validation event-accuracy diagnostics: %s, %s, %s",
+        "Saved validation event diagnostics: %s, %s, plots=%s, representative displays=%s",
         val_event_paths["json"],
         val_event_paths["csv"],
-        run_dir / "val_event_accuracy_overview.png",
+        validation_plot_paths,
+        representative_display_paths,
     )
     log_worst_event_accuracies(logger, val_event_records, "validation")
 

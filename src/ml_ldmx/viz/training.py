@@ -155,6 +155,99 @@ def plot_event_accuracy_overview(records, output_path, title, annotate_worst=8):
     plt.close(fig)
 
 
+def _finite_record_values(records, x_key, y_key="accuracy"):
+    x_values = []
+    y_values = []
+    colors = []
+    for record in records:
+        x_value = record.get(x_key)
+        y_value = record.get(y_key)
+        if x_value is None or y_value is None:
+            continue
+        try:
+            x_value = float(x_value)
+            y_value = float(y_value)
+        except (TypeError, ValueError):
+            continue
+        if not (np.isfinite(x_value) and np.isfinite(y_value)):
+            continue
+        x_values.append(x_value)
+        y_values.append(y_value)
+        colors.append(float(record.get("incorrect_hits", 0)))
+    return np.asarray(x_values), np.asarray(y_values), np.asarray(colors)
+
+
+def plot_event_diagnostic_correlations(records, output_path, title):
+    """Plot event accuracy against confidence and shower-overlap diagnostics."""
+    if not records:
+        return
+
+    metric_specs = [
+        ("loss", "event cross entropy"),
+        ("num_hits", "ECal hits"),
+        ("mean_confidence", "mean confidence"),
+        ("mean_entropy", "mean normalized entropy"),
+        ("energy_weighted_accuracy", "energy-weighted accuracy"),
+        ("min_origin_centroid_distance_xy", "min origin centroid distance XY [mm]"),
+        (
+            "first_layer_min_origin_centroid_distance_xy",
+            "first-layer min origin centroid distance XY [mm]",
+        ),
+        ("mean_hit_centroid_margin_xy", "mean hit centroid margin XY [mm]"),
+    ]
+    available = []
+    for key, label in metric_specs:
+        x_values, y_values, colors = _finite_record_values(records, key)
+        if x_values.size >= 2:
+            available.append((key, label, x_values, y_values, colors))
+
+    if not available:
+        return
+
+    cols = 2
+    rows = int(np.ceil(len(available) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(12, 4.2 * rows), squeeze=False)
+    scatter = None
+    for ax, (key, label, x_values, y_values, colors) in zip(axes.flat, available):
+        scatter = ax.scatter(
+            x_values,
+            y_values,
+            c=colors,
+            cmap="Reds",
+            s=32,
+            alpha=0.78,
+            edgecolors="#1f2933",
+            linewidths=0.25,
+        )
+        if x_values.size > 2 and np.nanstd(x_values) > 0 and np.nanstd(y_values) > 0:
+            correlation = float(np.corrcoef(x_values, y_values)[0, 1])
+            ax.text(
+                0.03,
+                0.05,
+                f"r={correlation:.2f}",
+                transform=ax.transAxes,
+                fontsize=9,
+                bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+            )
+        ax.set_xlabel(label)
+        ax.set_ylabel("event hit accuracy")
+        ax.set_ylim(-0.03, 1.03)
+        ax.grid(True, alpha=0.25)
+        ax.set_title(label)
+
+    for ax in axes.flat[len(available):]:
+        ax.axis("off")
+
+    fig.suptitle(title)
+    if scatter is not None:
+        colorbar = fig.colorbar(scatter, ax=axes[:, :], shrink=0.88, pad=0.015)
+        colorbar.set_label("incorrect hits")
+    fig.subplots_adjust(top=0.91, hspace=0.38, wspace=0.25)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
 def plot_test_fraction_summaries(plot_samples, args, run_dir):
     if plot_samples is None or plot_samples["fraction_target"].numel() == 0:
         return

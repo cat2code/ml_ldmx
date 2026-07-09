@@ -3,6 +3,7 @@
 import torch
 import torch.nn.functional as F
 
+from ml_ldmx.eval.event_diagnostics import event_diagnostic_record
 from ml_ldmx.train.batching import chunks
 from ml_ldmx.train.hit_classifier_batching import (
     collate_hit_classifier_batch,
@@ -55,26 +56,36 @@ def _metadata_value(value):
     return str(value)
 
 
-def _event_metric_record(event_idx, split_position, view, true_class, pred_class, loss):
-    true_class = true_class.detach()
-    pred_class = pred_class.detach()
-    num_hits = int(true_class.numel())
-    correct_hits = int((true_class == pred_class).sum().detach().cpu().item())
-    accuracy = None if num_hits == 0 else correct_hits / num_hits
-    return {
-        "event_idx": int(event_idx),
-        "split_position": int(split_position),
-        "num_hits": num_hits,
-        "correct_hits": correct_hits,
-        "incorrect_hits": num_hits - correct_hits,
-        "accuracy": accuracy,
-        "loss": None if loss is None else float(loss.detach().cpu().item()),
-        "source_file": _metadata_value(view.get("source_file")),
-        "source_entry": _metadata_value(view.get("source_entry")),
-        "source_label": _metadata_value(view.get("source_label")),
-        "electron_count": _metadata_value(view.get("electron_count")),
-        "target_label_order": _metadata_value(view.get("target_label_order")),
-    }
+def _event_metric_record(
+    event_idx,
+    split_position,
+    view,
+    true_class,
+    pred_class,
+    loss,
+    logits=None,
+    centroid_radius_mm=25.0,
+):
+    record = event_diagnostic_record(
+        event_idx=event_idx,
+        split_position=split_position,
+        view=view,
+        true_class=true_class,
+        pred_class=pred_class,
+        loss=loss,
+        logits=logits,
+        centroid_radius_mm=centroid_radius_mm,
+    )
+    record.update(
+        {
+            "source_file": _metadata_value(view.get("source_file")),
+            "source_entry": _metadata_value(view.get("source_entry")),
+            "source_label": _metadata_value(view.get("source_label")),
+            "electron_count": _metadata_value(view.get("electron_count")),
+            "target_label_order": _metadata_value(view.get("target_label_order")),
+        }
+    )
+    return record
 
 
 @torch.no_grad()
@@ -82,6 +93,7 @@ def collect_event_metrics(model, events, indices, view_fn, args, device):
     """Collect hit-level accuracy summarized per event for a split."""
     model.eval()
     batch_kind = hit_classifier_batch_kind(model)
+    centroid_radius_mm = float(getattr(args, "event_diagnostic_radius_mm", 25.0))
     split_position = {int(event_idx): position for position, event_idx in enumerate(indices)}
     ordered_indices = (
         events.order_indices_for_access(indices)
@@ -101,6 +113,8 @@ def collect_event_metrics(model, events, indices, view_fn, args, device):
                         true_class=losses["true_class"],
                         pred_class=losses["pred_class"],
                         loss=losses["total_loss"],
+                        logits=losses.get("supervised_logits"),
+                        centroid_radius_mm=centroid_radius_mm,
                     )
                 )
             continue
@@ -123,6 +137,8 @@ def collect_event_metrics(model, events, indices, view_fn, args, device):
                         true_class=target,
                         pred_class=pred_class,
                         loss=loss,
+                        logits=event_logits,
+                        centroid_radius_mm=centroid_radius_mm,
                     )
                 )
         elif hit_batch.kind == "graph":
@@ -141,6 +157,8 @@ def collect_event_metrics(model, events, indices, view_fn, args, device):
                         true_class=target,
                         pred_class=pred_class,
                         loss=loss,
+                        logits=event_logits,
+                        centroid_radius_mm=centroid_radius_mm,
                     )
                 )
         else:

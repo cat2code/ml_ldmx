@@ -46,6 +46,12 @@ class FeatureTransformTest(unittest.TestCase):
         self.assertEqual(float(tensors["x"][2, 6]), 7.0)
         self.assertTrue(torch.allclose(tensors["x"][2, 7], torch.tensor(math.log1p(8.0))))
         self.assertTrue(torch.allclose(tensors["tpad"][0], torch.tensor([7.0, math.log1p(8.0)])))
+        self.assertTrue(
+            torch.allclose(
+                tensors["ecal_input_energy"],
+                torch.tensor([0.0, math.log1p(9.0)]),
+            )
+        )
 
     def test_fraction_targets_remain_in_truth_energy_units(self):
         tensors = ecal_tpad_event_to_tensors(

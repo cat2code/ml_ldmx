@@ -33,6 +33,7 @@ def compute_event_losses(model, event_or_view, view_fn, device):
     pred_class = supervised_logits.argmax(dim=1)
     return {
         "total_loss": loss,
+        "supervised_logits": supervised_logits,
         "pred_class": pred_class,
         "true_class": target,
         "num_hits": target.numel(),
@@ -64,6 +65,7 @@ def compute_batch_losses(model, views, batch_kind, device):
     pred_class = supervised_logits.argmax(dim=1)
     return {
         "total_loss": loss,
+        "supervised_logits": supervised_logits,
         "pred_class": pred_class,
         "true_class": target,
         "num_hits": target.numel(),

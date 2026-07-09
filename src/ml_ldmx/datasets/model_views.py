@@ -16,6 +16,7 @@ _METADATA_FIELDS = (
     "target_class_names",
 )
 _OPTIONAL_TARGET_FIELDS = ("canonical_y", "fraction_target", "origin_id_fraction_target")
+_OPTIONAL_HIT_FIELDS = ("ecal_input_energy",)
 
 
 def validate_canonical_combined_event(event: dict) -> None:
@@ -55,6 +56,9 @@ def validate_canonical_combined_event(event: dict) -> None:
     for key in ("origin_id_y", "canonical_y"):
         if key in event:
             _require_hit_vector(event, key, num_ecal)
+    for key in _OPTIONAL_HIT_FIELDS:
+        if key in event:
+            _require_hit_vector(event, key, num_ecal)
     for key in ("fraction_target", "origin_id_fraction_target"):
         if key in event:
             target = event[key]
@@ -87,6 +91,9 @@ def _hit_targets_and_metadata(event: dict) -> dict:
         "origin_id_y": physical_origin,
     }
     for key in _OPTIONAL_TARGET_FIELDS:
+        if key in event:
+            fields[key] = event[key]
+    for key in _OPTIONAL_HIT_FIELDS:
         if key in event:
             fields[key] = event[key]
     for key in _METADATA_FIELDS:
