@@ -272,6 +272,7 @@ def tensorize_ecal_node_classification(
     ecal_energy_transform="raw",
 ):
     x, pos = tensorize_ecal_event(event, ecal_energy_transform=ecal_energy_transform)
+    raw_energy = _as_tensor(event["energy"], torch.float32)
     labels = dominant_origin_class_labels(
         event,
         valid_labels=valid_labels,
@@ -285,6 +286,7 @@ def tensorize_ecal_node_classification(
         "y": labels["class_labels"],
         "physical_y": labels["physical_labels"],
         "ecal_input_energy": x[keep_indices, 3].clone(),
+        "ecal_raw_energy": raw_energy[keep_indices].clone(),
         "keep_indices": keep_indices,
         "label_to_class": labels["label_to_class"],
         "class_to_label": labels["class_to_label"],
@@ -391,6 +393,7 @@ def tensorize_ecal_with_triggerpad_context(
         "ecal_pos": ecal["pos"],
         "pos": ecal["pos"],
         "ecal_input_energy": ecal["ecal_input_energy"],
+        "ecal_raw_energy": ecal["ecal_raw_energy"],
         "tpad": tpad,
         "ecal_mask": ecal_mask,
         "tpad_mask": tpad_mask,

@@ -67,6 +67,13 @@ def parse_args():
     )
     parser.add_argument("--split", choices=("train", "val", "test"), default="val")
     parser.add_argument(
+        "--event-index",
+        type=int,
+        action="append",
+        default=None,
+        help="Inspect a specific saved split event index; repeat for multiple events.",
+    )
+    parser.add_argument(
         "--num-events",
         type=int,
         default=9,
@@ -363,12 +370,22 @@ def main():
     logger.info("Model: %s; split: %s; device: %s", args.model, inspection_args.split, device)
 
     events, _event_sources, data_dir, _root_files = training.load_events(args, logger)
-    split_indices = validate_saved_split(
+    saved_split_indices = validate_saved_split(
         events,
         checkpoint,
         config,
         inspection_args.split,
     )
+    split_indices = saved_split_indices
+    if inspection_args.event_index:
+        requested_indices = list(dict.fromkeys(int(index) for index in inspection_args.event_index))
+        missing_indices = sorted(set(requested_indices) - set(saved_split_indices))
+        if missing_indices:
+            raise ValueError(
+                f"Requested event indices are not in the saved {inspection_args.split!r} split: "
+                f"{missing_indices}."
+            )
+        split_indices = requested_indices
     if inspection_args.max_inspection_events is not None:
         split_indices = split_indices[: inspection_args.max_inspection_events]
     if not split_indices:
@@ -396,12 +413,25 @@ def main():
         f"{args.model} {inspection_args.split} event diagnostics",
     )
 
-    per_group = max(1, math.ceil(inspection_args.num_events / 3)) if inspection_args.num_events else 0
-    selection = select_representative_events(
-        records,
-        limit_per_group=per_group,
-        metric="accuracy",
-    )
+    if inspection_args.event_index:
+        selection = {
+            "metric": "requested_event_idx",
+            "requested": records,
+            "worst": [],
+            "median": [],
+            "best": [],
+        }
+    else:
+        per_group = (
+            max(1, math.ceil(inspection_args.num_events / 3))
+            if inspection_args.num_events
+            else 0
+        )
+        selection = select_representative_events(
+            records,
+            limit_per_group=per_group,
+            metric="accuracy",
+        )
     selection_path = output_dir / f"{inspection_args.split}_representative_events.json"
     save_json(selection_path, selection)
     display_paths = training.plot_representative_predictions(
@@ -431,6 +461,7 @@ def main():
         "used_saved_feature_normalization": checkpoint.get("feature_norm") is not None,
         "event_diagnostic_radius_mm": float(args.event_diagnostic_radius_mm),
         "limited_to_first_split_events": inspection_args.max_inspection_events,
+        "requested_event_indices": inspection_args.event_index,
         "summary": summary,
         "generated_files": [str(path.relative_to(output_dir)) for path in generated_paths],
     }

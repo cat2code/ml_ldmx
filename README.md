@@ -182,6 +182,36 @@ local machine, point it at the relocated data with `--processed-dir`,
 `--processed-cache`, `--processed-cache-root`, or repeated
 `--processed-source` arguments.
 
+### Comparing Two Baseline Runs
+
+After inspecting two models on the same saved split, build paired difficulty
+profiles with:
+
+```bash
+python scripts/compare_hit_classifier_runs.py \
+  --run transformer=outputs/hit_classifier_baseline/transformer_run \
+  --run gravnet=outputs/hit_classifier_baseline/gravnet_run \
+  --split val
+```
+
+The comparison requires identical event sets by default. It writes matched
+per-event results, binned accuracy versus shower overlap and hit count,
+confidence intervals, electron-count summaries, paired model differences, and
+lists of events where both models fail or one model clearly outperforms the
+other. The normalized overlap diagnostic is the minimum centroid separation
+divided by the two showers' combined RMS width. An early-shower variant uses
+the first three ECal layers.
+
+Render event indices selected by the comparison with repeated arguments such
+as `--event-index 123 --event-index 456` in
+`scripts/inspect_hit_classifier_run.py`. Set `--num-events` at least as large
+as the number requested when all selected displays should be written.
+
+New processed caches preserve raw reconstructed ECal energy separately from
+the optionally log-transformed model input. This keeps energy-weighted
+diagnostics physically interpretable. Existing caches remain supported and
+use their stored input-energy vector as a fallback.
+
 ### Pipeline Benchmarking
 
 Measure local IO, adapter, and representative forward/backward throughput

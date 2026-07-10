@@ -175,7 +175,75 @@ def _centroid_distance_stats(centroids, radius):
     return min_distance, mean_distance, within_radius
 
 
-def _hit_centroid_margin_summary(pos_xy, labels):
+def _weighted_shower_moments(pos_xy, labels, weights=None):
+    valid = labels >= 0
+    if not bool(valid.any().item()):
+        return None, None, []
+    present_labels = sorted({int(label) for label in labels[valid].tolist()})
+    centroids = []
+    widths = []
+    for label in present_labels:
+        mask = labels == label
+        shower_pos = pos_xy[mask].to(dtype=torch.float64)
+        if shower_pos.numel() == 0:
+            continue
+        shower_weights = (
+            weights[mask].to(dtype=torch.float64).clamp_min(0.0)
+            if weights is not None
+            else torch.ones((shower_pos.shape[0],), dtype=torch.float64)
+        )
+        if float(shower_weights.sum().item()) <= 0.0:
+            shower_weights = torch.ones_like(shower_weights)
+        total_weight = shower_weights.sum()
+        centroid = (shower_pos * shower_weights[:, None]).sum(dim=0) / total_weight
+        squared_radius = ((shower_pos - centroid) ** 2).sum(dim=1)
+        width = torch.sqrt((squared_radius * shower_weights).sum() / total_weight)
+        centroids.append(centroid)
+        widths.append(width)
+    if not centroids:
+        return None, None, []
+    return torch.stack(centroids), torch.stack(widths), present_labels
+
+
+def _normalized_separation_stats(centroids, widths):
+    if centroids is None or widths is None or centroids.shape[0] < 2:
+        return None, None
+    separations = []
+    for first_idx in range(centroids.shape[0] - 1):
+        for second_idx in range(first_idx + 1, centroids.shape[0]):
+            combined_width = torch.sqrt(
+                widths[first_idx] ** 2 + widths[second_idx] ** 2
+            )
+            if float(combined_width.item()) <= 1e-12:
+                continue
+            distance = torch.linalg.vector_norm(
+                centroids[first_idx] - centroids[second_idx]
+            )
+            separations.append(distance / combined_width)
+    if not separations:
+        return None, None
+    values = torch.stack(separations)
+    return _finite_float(values.min().item()), _mean_or_none(values)
+
+
+def _shower_overlap_summary(pos_xy, labels, weights=None, prefix=""):
+    centroids, widths, _present_labels = _weighted_shower_moments(
+        pos_xy,
+        labels,
+        weights=weights,
+    )
+    minimum, mean = _normalized_separation_stats(centroids, widths)
+    return {
+        f"{prefix}min_normalized_shower_separation_xy": minimum,
+        f"{prefix}mean_normalized_shower_separation_xy": mean,
+        f"{prefix}mean_shower_width_xy": _mean_or_none(widths),
+        f"{prefix}max_shower_width_xy": (
+            None if widths is None or widths.numel() == 0 else _finite_float(widths.max().item())
+        ),
+    }
+
+
+def _hit_centroid_margin_summary(pos_xy, labels, weights=None):
     centroids, present_labels = _centroids_by_label(pos_xy, labels, dims=[0, 1])
     if centroids is None or centroids.shape[0] < 2:
         return {}
@@ -199,12 +267,23 @@ def _hit_centroid_margin_summary(pos_xy, labels):
     if not bool(finite_other.any().item()):
         return {}
     margin = nearest_other_distance[finite_other] - own_distance[finite_other]
-    return {
+    ambiguous = margin < 0.0
+    summary = {
         "mean_hit_distance_to_origin_centroid_xy": _mean_or_none(own_distance),
         "p90_hit_distance_to_origin_centroid_xy": _quantile_or_none(own_distance, 0.9),
         "mean_hit_centroid_margin_xy": _mean_or_none(margin),
         "min_hit_centroid_margin_xy": _finite_float(margin.min().item()),
+        "ambiguous_hit_fraction_xy": float(ambiguous.to(dtype=torch.float64).mean().item()),
     }
+    if weights is not None and weights.shape[0] == labels.shape[0]:
+        valid_weights = weights[valid][finite_other].to(dtype=torch.float64).clamp_min(0.0)
+        total_weight = float(valid_weights.sum().item())
+        summary["energy_weighted_ambiguous_hit_fraction_xy"] = (
+            float(valid_weights[ambiguous].sum().item()) / total_weight
+            if total_weight > 0.0
+            else None
+        )
+    return summary
 
 
 def geometry_metric_summary(
@@ -229,6 +308,28 @@ def geometry_metric_summary(
     if labels is None:
         labels = true_class
 
+    raw_energy_weights = _optional_aligned_hit_vector(
+        view,
+        names=("ecal_raw_energy",),
+        num_hits=num_hits,
+        dtype=torch.float32,
+    )
+    input_energy_weights = _optional_aligned_hit_vector(
+        view,
+        names=("ecal_input_energy", "ecal_energy"),
+        num_hits=num_hits,
+        dtype=torch.float32,
+    )
+    if raw_energy_weights is not None:
+        energy_weights = raw_energy_weights
+        overlap_weighting = "raw_reconstructed_energy"
+    elif input_energy_weights is not None:
+        energy_weights = input_energy_weights
+        overlap_weighting = "model_input_energy_fallback"
+    else:
+        energy_weights = None
+        overlap_weighting = "uniform"
+
     valid_labels = labels >= 0
     present_labels = sorted({int(label) for label in labels[valid_labels].tolist()})
     z_values = pos[:, 2]
@@ -236,6 +337,7 @@ def geometry_metric_summary(
 
     summary = {
         "diagnostic_centroid_radius_mm": float(centroid_radius_mm),
+        "shower_overlap_weighting": overlap_weighting,
         "num_truth_classes": len(present_labels),
         "num_ecal_layers": int(torch.unique(z_values).numel()),
         "ecal_z_min": _finite_float(z_values.min().item()) if num_hits else None,
@@ -268,9 +370,46 @@ def geometry_metric_summary(
             "max_origin_centroids_within_radius_xy": within_radius,
         }
     )
-    summary.update(_hit_centroid_margin_summary(xy, labels))
+    summary.update(_shower_overlap_summary(xy, labels, weights=energy_weights))
+    summary.update(_hit_centroid_margin_summary(xy, labels, weights=energy_weights))
 
     if num_hits:
+        unique_z = torch.unique(z_values, sorted=True)
+        early_z = unique_z[: min(3, unique_z.numel())]
+        early_mask = torch.isin(z_values, early_z)
+        early_labels = labels[early_mask]
+        early_pos = pos[early_mask]
+        early_weights = energy_weights[early_mask] if energy_weights is not None else None
+        early_valid_labels = early_labels >= 0
+        early_present_labels = sorted(
+            {int(label) for label in early_labels[early_valid_labels].tolist()}
+        )
+        early_centroids, _early_labels = _centroids_by_label(
+            early_pos,
+            early_labels,
+            dims=[0, 1],
+        )
+        early_min_distance, early_mean_distance, _early_within_radius = (
+            _centroid_distance_stats(early_centroids, radius=None)
+        )
+        summary.update(
+            {
+                "early_layer_count": int(early_z.numel()),
+                "early_layer_num_hits": int(early_mask.sum().item()),
+                "early_layer_num_truth_classes": len(early_present_labels),
+                "early_min_origin_centroid_distance_xy": early_min_distance,
+                "early_mean_origin_centroid_distance_xy": early_mean_distance,
+            }
+        )
+        summary.update(
+            _shower_overlap_summary(
+                early_pos[:, :2],
+                early_labels,
+                weights=early_weights,
+                prefix="early_",
+            )
+        )
+
         first_z = z_values.min()
         first_layer_mask = torch.isclose(
             z_values,
@@ -318,7 +457,7 @@ def event_diagnostic_record(
     pred_class = _to_1d_cpu_tensor(pred_class, dtype=torch.long)
     energy_weights = _optional_aligned_hit_vector(
         view,
-        names=("ecal_input_energy", "ecal_energy"),
+        names=("ecal_raw_energy", "ecal_input_energy", "ecal_energy"),
         num_hits=int(true_class.numel()),
         dtype=torch.float32,
     )

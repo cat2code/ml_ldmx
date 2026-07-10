@@ -634,7 +634,11 @@ def log_worst_event_accuracies(logger, records, split_name, limit=8):
 def _representative_display_records(selection, max_total):
     if max_total <= 0:
         return []
-    groups = ("worst", "median", "best")
+    groups = tuple(
+        group
+        for group in ("requested", "worst", "median", "best")
+        if group in selection
+    )
     group_positions = {group: 0 for group in groups}
     selected = []
     seen_event_indices = set()
@@ -748,7 +752,7 @@ def plot_representative_predictions(
                 _predicted_display_labels(view, losses["pred_class"]),
                 output_path=html_path,
                 title=title,
-                energy=view.get("ecal_input_energy"),
+                energy=view.get("ecal_raw_energy", view.get("ecal_input_energy")),
                 confidence=confidence,
                 entropy=entropy,
             )

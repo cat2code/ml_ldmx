@@ -27,6 +27,7 @@ def _view(logits, target, event_idx, pos=None, energy=None):
         "ecal_mask": torch.ones((num_hits,), dtype=torch.bool),
         "ecal_pos": torch.as_tensor(pos, dtype=torch.float32),
         "ecal_input_energy": torch.as_tensor(energy, dtype=torch.float32),
+        "ecal_raw_energy": torch.as_tensor(energy, dtype=torch.float32),
         "y": torch.as_tensor(target, dtype=torch.long),
         "source_file": f"event_{event_idx}.root",
         "source_entry": torch.tensor(event_idx),
@@ -73,6 +74,43 @@ class EventAccuracyDiagnosticsTest(unittest.TestCase):
         self.assertEqual(records[1]["accuracy"], 1.0)
         self.assertEqual(records[1]["source_file"], "event_11.root")
         self.assertEqual(records[1]["source_entry"], 11)
+
+    def test_normalized_shower_separation_and_ambiguity_metrics(self):
+        events = [
+            _view(
+                [[5.0, 0.0], [5.0, 0.0], [0.0, 5.0], [0.0, 5.0]],
+                [0, 0, 1, 1],
+                12,
+                pos=[
+                    [-1.0, 0.0, 10.0],
+                    [1.0, 0.0, 10.0],
+                    [9.0, 0.0, 10.0],
+                    [11.0, 0.0, 10.0],
+                ],
+            )
+        ]
+        args = SimpleNamespace(batch_size=1, valid_labels=[0, 1])
+
+        record = collect_event_metrics(
+            IdentityLogitModel(),
+            events,
+            [0],
+            None,
+            args,
+            torch.device("cpu"),
+        )[0]
+
+        self.assertAlmostEqual(
+            record["min_normalized_shower_separation_xy"],
+            10.0 / (2.0**0.5),
+        )
+        self.assertAlmostEqual(
+            record["early_min_normalized_shower_separation_xy"],
+            10.0 / (2.0**0.5),
+        )
+        self.assertEqual(record["ambiguous_hit_fraction_xy"], 0.0)
+        self.assertEqual(record["early_layer_count"], 1)
+        self.assertEqual(record["shower_overlap_weighting"], "raw_reconstructed_energy")
 
     def test_plot_event_accuracy_overview_writes_file(self):
         records = [

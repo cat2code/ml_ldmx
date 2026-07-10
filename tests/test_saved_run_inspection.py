@@ -16,6 +16,7 @@ from inspect_hit_classifier_run import (
     restore_event_preprocessing,
     summarize_records,
 )
+from train_hit_classifier_baseline import _representative_display_records
 
 
 class SavedRunInspectionTest(unittest.TestCase):
@@ -51,6 +52,7 @@ class SavedRunInspectionTest(unittest.TestCase):
             "physical_y": torch.tensor([2, 1]),
             "y": torch.tensor([2, 1]),
             "ecal_input_energy": torch.tensor([6.0, 8.0]),
+            "ecal_raw_energy": torch.tensor([400.0, 800.0]),
             "event_idx": 0,
         }
         checkpoint = {
@@ -72,6 +74,7 @@ class SavedRunInspectionTest(unittest.TestCase):
         self.assertEqual(restored["target_label_order"], [2, 1])
         self.assertEqual(restored["y"].tolist(), [0, 1])
         self.assertEqual(restored["ecal_input_energy"].tolist(), [6.0, 8.0])
+        self.assertEqual(restored["ecal_raw_energy"].tolist(), [400.0, 800.0])
 
     def test_summarize_records_reports_hit_and_event_aggregates(self):
         summary = summarize_records(
@@ -87,6 +90,22 @@ class SavedRunInspectionTest(unittest.TestCase):
         self.assertAlmostEqual(summary["mean_event_accuracy"], 0.625)
         self.assertAlmostEqual(summary["median_event_accuracy"], 0.625)
         self.assertAlmostEqual(summary["mean_event_loss"], 0.6)
+
+    def test_requested_event_displays_preserve_requested_order(self):
+        requested = [
+            {"event_idx": 7, "accuracy": 0.2},
+            {"event_idx": 3, "accuracy": 0.8},
+        ]
+
+        selected = _representative_display_records(
+            {"requested": requested, "worst": [], "median": [], "best": []},
+            max_total=2,
+        )
+
+        self.assertEqual(
+            [(group, record["event_idx"]) for group, record in selected],
+            [("requested", 7), ("requested", 3)],
+        )
 
 
 if __name__ == "__main__":

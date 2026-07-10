@@ -190,6 +190,15 @@ def plot_event_diagnostic_correlations(records, output_path, title):
         ("energy_weighted_accuracy", "energy-weighted accuracy"),
         ("min_origin_centroid_distance_xy", "min origin centroid distance XY [mm]"),
         (
+            "min_normalized_shower_separation_xy",
+            "min normalized shower separation XY",
+        ),
+        (
+            "early_min_normalized_shower_separation_xy",
+            "early-layer min normalized shower separation XY",
+        ),
+        ("ambiguous_hit_fraction_xy", "geometrically ambiguous hit fraction"),
+        (
             "first_layer_min_origin_centroid_distance_xy",
             "first-layer min origin centroid distance XY [mm]",
         ),

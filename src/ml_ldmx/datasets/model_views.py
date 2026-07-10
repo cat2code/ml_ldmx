@@ -16,7 +16,7 @@ _METADATA_FIELDS = (
     "target_class_names",
 )
 _OPTIONAL_TARGET_FIELDS = ("canonical_y", "fraction_target", "origin_id_fraction_target")
-_OPTIONAL_HIT_FIELDS = ("ecal_input_energy",)
+_OPTIONAL_HIT_FIELDS = ("ecal_input_energy", "ecal_raw_energy")
 
 
 def validate_canonical_combined_event(event: dict) -> None:

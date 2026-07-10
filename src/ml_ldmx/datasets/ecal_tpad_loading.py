@@ -206,6 +206,7 @@ def filter_noise_tensor_event(event):
         "ecal_pos",
         "pos",
         "ecal_input_energy",
+        "ecal_raw_energy",
         "y",
         "physical_y",
         "origin_id_y",
