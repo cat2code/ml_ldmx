@@ -4,6 +4,7 @@ import unittest
 import torch
 
 from ml_ldmx.datasets.ecal_tpad_loading import ecal_tpad_event_to_tensors
+from ml_ldmx.datasets.model_views import ecal_tpad_transformer_view, ecal_transformer_view
 from ml_ldmx.datasets.tensorize import tensorize_ecal_event, tensorize_ecal_with_triggerpad_context
 
 
@@ -46,6 +47,7 @@ class FeatureTransformTest(unittest.TestCase):
         self.assertEqual(float(tensors["x"][2, 6]), 7.0)
         self.assertTrue(torch.allclose(tensors["x"][2, 7], torch.tensor(math.log1p(8.0))))
         self.assertTrue(torch.allclose(tensors["tpad"][0], torch.tensor([7.0, math.log1p(8.0)])))
+        self.assertTrue(torch.allclose(tensors["tpad_raw_pe"], torch.tensor([8.0])))
         self.assertTrue(
             torch.allclose(
                 tensors["ecal_input_energy"],
@@ -65,6 +67,19 @@ class FeatureTransformTest(unittest.TestCase):
 
         expected = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
         self.assertTrue(torch.allclose(tensors["fraction_target"], expected))
+
+    def test_raw_tpad_pe_is_available_only_to_combined_views(self):
+        tensors = tensorize_ecal_with_triggerpad_context(
+            _event(),
+            valid_labels=(1, 2),
+            tpad_pe_transform="log1p",
+        )
+
+        combined_view = ecal_tpad_transformer_view(tensors)
+        ecal_view = ecal_transformer_view(tensors)
+
+        self.assertTrue(torch.equal(combined_view["tpad_raw_pe"], torch.tensor([8.0])))
+        self.assertNotIn("tpad_raw_pe", ecal_view)
 
     def test_unknown_transform_is_rejected(self):
         with self.assertRaises(ValueError):

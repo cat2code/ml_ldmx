@@ -96,6 +96,7 @@ def main():
             "x": tensors["x"],
             "ecal_pos": tensors["ecal_pos"],
             "tpad": tensors["tpad"],
+            "tpad_raw_pe": tensors["tpad_raw_pe"],
             "ecal_mask": tensors["ecal_mask"],
             "tpad_mask": tensors["tpad_mask"],
             "y": tensors["y"],

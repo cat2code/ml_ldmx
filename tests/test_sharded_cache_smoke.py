@@ -15,6 +15,7 @@ from ml_ldmx.datasets.ecal_tpad_shards import (
     validate_sharded_tensor_cache,
 )
 from ml_ldmx.datasets.model_views import ecal_transformer_view
+from ml_ldmx.datasets.tensorize import transform_ecal_energy, transform_tpad_pe
 from ml_ldmx.models import ECalTransformer
 from ml_ldmx.train.hit_classifier_baseline import compute_event_losses
 
@@ -39,6 +40,18 @@ def _root_data_root() -> Path:
             return data_root
     searched = ", ".join(str(path) for path in candidates)
     raise unittest.SkipTest(f"No complete 2e/3e ROOT data directory found. Set ML_LDMX_ROOT_DATA. Searched: {searched}")
+
+
+def _root_specs():
+    root_2e = os.environ.get("ML_LDMX_ROOT_2E_DIR")
+    root_3e = os.environ.get("ML_LDMX_ROOT_3E_DIR")
+    if root_2e and root_3e:
+        return [(2, "2e", Path(root_2e)), (3, "3e", Path(root_3e))]
+    data_root = _root_data_root()
+    return [
+        (2, "2e", data_root / "2e/events"),
+        (3, "3e", data_root / "3e/events"),
+    ]
 
 
 def _env_int(name: str, default: int) -> int:
@@ -75,13 +88,11 @@ def _canonical_noise_transform(event: dict) -> dict:
 class ShardedCacheSmokeTest(unittest.TestCase):
     def test_root_to_sharded_cache_lazy_reuse_and_training_step(self):
         torch.manual_seed(7)
-        data_root = _root_data_root()
         max_root_files = _env_int("ML_LDMX_SHARD_SMOKE_MAX_ROOT_FILES", 1)
         max_events_per_root_file = _env_int("ML_LDMX_SHARD_SMOKE_MAX_EVENTS_PER_ROOT_FILE", 10)
-        root_specs = [
-            (2, "2e", data_root / "2e/events"),
-            (3, "3e", data_root / "3e/events"),
-        ]
+        ecal_energy_transform = os.environ.get("ML_LDMX_ECAL_ENERGY_TRANSFORM", "raw")
+        tpad_pe_transform = os.environ.get("ML_LDMX_TPAD_PE_TRANSFORM", "raw")
+        root_specs = _root_specs()
 
         with TemporaryDirectory(prefix="ml_ldmx_sharded_smoke_") as temporary_dir:
             cache_dir = Path(temporary_dir)
@@ -94,15 +105,35 @@ class ShardedCacheSmokeTest(unittest.TestCase):
                 "max_root_files": max_root_files,
                 "max_events_per_root_file": max_events_per_root_file,
                 "read_step_size": 50,
+                "ecal_energy_transform": ecal_energy_transform,
+                "tpad_pe_transform": tpad_pe_transform,
                 "logger": logging.getLogger("sharded-cache-smoke-test"),
             }
             prepare_sharded_tensor_cache(**common_kwargs)
             prepare_sharded_tensor_cache(**common_kwargs)
-            _manifest, index = validate_sharded_tensor_cache(cache_dir, load_shards=True)
+            manifest, index = validate_sharded_tensor_cache(cache_dir, load_shards=True)
+            self.assertEqual(manifest["ecal_energy_transform"], ecal_energy_transform)
+            self.assertEqual(manifest["tpad_pe_transform"], tpad_pe_transform)
             dataset = ShardedECalTpadDataset(cache_dir, shard_cache_size=1)
             expected_events = sum(entry["num_events"] for entry in index["shards"])
             self.assertEqual(len(dataset), expected_events)
             self.assertGreaterEqual(len(index["shards"]), 2)
+
+            stored_event = dataset[0]
+            self.assertIn("ecal_raw_energy", stored_event)
+            self.assertIn("tpad_raw_pe", stored_event)
+            self.assertTrue(
+                torch.allclose(
+                    stored_event["ecal_input_energy"],
+                    transform_ecal_energy(stored_event["ecal_raw_energy"], ecal_energy_transform),
+                )
+            )
+            self.assertTrue(
+                torch.allclose(
+                    stored_event["tpad"][:, 1],
+                    transform_tpad_pe(stored_event["tpad_raw_pe"], tpad_pe_transform),
+                )
+            )
 
             source_transition_idx = next(
                 (
@@ -115,6 +146,7 @@ class ShardedCacheSmokeTest(unittest.TestCase):
             )
             self.assertIsNotNone(source_transition_idx)
             source_boundary_start = index["shards"][source_transition_idx]["event_start"]
+            self.assertEqual(int(dataset[source_boundary_start]["event_idx"]), source_boundary_start)
             self.assertNotEqual(
                 dataset[source_boundary_start - 1]["source_label"],
                 dataset[source_boundary_start]["source_label"],

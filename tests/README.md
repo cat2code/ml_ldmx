@@ -8,12 +8,7 @@ metadata, and then exit without writing training artifacts.
 Run the normal test suite from the repository root:
 
 ```bash
-python -m pytest tests -q
-```
-
-The same tests are also compatible with the Python standard library runner:
-
-```bash
+cd ml_ldmx/
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 

@@ -354,6 +354,10 @@ def tensorize_ecal_with_triggerpad_context(
         ecal_energy_transform=ecal_energy_transform,
     )
     tpad = tensorize_trigger_pad_tracks(event, tpad_pe_transform=tpad_pe_transform)
+    trigger_pad_tracks = event.get("trigger_pad_tracks", {})
+    tpad_raw_pe = _as_1d_float_tensor(
+        trigger_pad_tracks.get("pe", event.get("tpad_pe"))
+    )
 
     ecal_x = ecal["x"]
     num_ecal = ecal_x.shape[0]
@@ -395,6 +399,7 @@ def tensorize_ecal_with_triggerpad_context(
         "ecal_input_energy": ecal["ecal_input_energy"],
         "ecal_raw_energy": ecal["ecal_raw_energy"],
         "tpad": tpad,
+        "tpad_raw_pe": tpad_raw_pe,
         "ecal_mask": ecal_mask,
         "tpad_mask": tpad_mask,
         "y": ecal["y"],

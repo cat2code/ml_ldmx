@@ -1,99 +1,196 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=ml_ldmx_tensorize_5M
+#SBATCH --job-name=ml_ldmx_tensorize
 #SBATCH --output=outputs/slurm/%x_%j.out
 #SBATCH --error=outputs/slurm/%x_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --time=02:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
 
 set -euo pipefail
 
-# Expected Cosmos layout:
-#   /path/to/work/production_5M_001/{2e,3e}/events/*.root
-#   /path/to/work/ml_ldmx/
-#
-# Submit after pulling the repository on Cosmos:
-#   cd /path/to/work/ml_ldmx
-#   mkdir -p outputs/slurm
-#   sbatch scripts/slurm/preprocess_production_5M_001_sharded.sbatch
-#
-# Follow output after submission, replacing JOB_ID with the ID printed by sbatch:
-#   tail -F tensorize_production_5M_001_JOB_ID.out tensorize_production_5M_001_JOB_ID.err
-#
-# The job is resumable: re-submitting it reuses already completed valid shards.
-# ROOT files that cannot be read/tensorized are recorded in index.json and skipped.
-# To bypass validation of an existing valid prefix, for example after completing
-# 2e shards 1-184, submit with --export=ALL,RESUME_2E_FROM_ROOT_INDEX=185.
-
+MODE="${MODE:-dispatch}"
 REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
-WORK_DIR="${WORK_DIR:-$(dirname "${REPO_DIR}")}"
-DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_5M_001_sharded}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
+PLAN_FILE="${PLAN_FILE:-}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-500}"
 ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
 TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM:-log1p}"
-RESUME_2E_FROM_ROOT_INDEX="${RESUME_2E_FROM_ROOT_INDEX:-1}"
-RESUME_3E_FROM_ROOT_INDEX="${RESUME_3E_FROM_ROOT_INDEX:-1}"
+MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-100}"
+CPUS_PER_WORKER="${CPUS_PER_WORKER:-1}"
+MEM_PER_WORKER="${MEM_PER_WORKER:-32G}"
+WORKER_TIME="${WORKER_TIME:-24:00:00}"
+FINALIZER_MEM="${FINALIZER_MEM:-16G}"
+FINALIZER_TIME="${FINALIZER_TIME:-04:00:00}"
+EXPECTED_EVENTS_2E="${EXPECTED_EVENTS_2E:-5000000}"
+EXPECTED_EVENTS_3E="${EXPECTED_EVENTS_3E:-5000000}"
+RUN_TESTS="${RUN_TESTS:-1}"
+FULL_VALIDATE="${FULL_VALIDATE:-0}"
+ALLOW_FAILED_ROOT_FILES="${ALLOW_FAILED_ROOT_FILES:-0}"
+FORCE="${FORCE:-0}"
+DRY_RUN="${DRY_RUN:-0}"
+SKIP_MODULE_LOAD="${SKIP_MODULE_LOAD:-0}"
+CLUSTER_MODULES="${CLUSTER_MODULES:-GCCcore/13.2.0 Python/3.11.5}"
 
-module purge
-module load GCCcore/13.2.0
-module load Python/3.11.5
-
-if [[ ! -f "${REPO_DIR}/scripts/preprocess_ecal_tpad_sharded.py" ]]; then
-  echo "Missing preprocessor in repository: ${REPO_DIR}/scripts/preprocess_ecal_tpad_sharded.py" >&2
+fail() {
+  echo "ERROR: $*" >&2
   exit 1
-fi
+}
 
-if [[ ! -f "${REPO_DIR}/.venv/bin/activate" ]]; then
-  echo "Missing Python virtual environment: ${REPO_DIR}/.venv/bin/activate" >&2
-  exit 1
-fi
+setup_environment() {
+  [[ -f "${REPO_DIR}/scripts/preprocess_ecal_tpad_array.py" ]] || \
+    fail "REPO_DIR does not point to ml_ldmx: ${REPO_DIR}"
 
-for label in 2e 3e; do
-  if [[ ! -d "${DATASET_DIR}/${label}/events" ]]; then
-    echo "Missing ROOT input directory: ${DATASET_DIR}/${label}/events" >&2
-    exit 1
+  if [[ "${SKIP_MODULE_LOAD}" != "1" ]]; then
+    type module >/dev/null 2>&1 || \
+      fail "The module command is unavailable. Set SKIP_MODULE_LOAD=1 or configure CLUSTER_MODULES."
+    module purge
+    # Module names are intentionally configurable for clusters other than Cosmos.
+    module load ${CLUSTER_MODULES}
   fi
-done
 
-cd "${REPO_DIR}"
-source .venv/bin/activate
+  if [[ -z "${VENV_DIR:-}" ]]; then
+    if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+      VENV_DIR="${REPO_DIR}/.venv"
+    elif [[ -f "${REPO_DIR}/../.venv/bin/activate" ]]; then
+      VENV_DIR="$(cd "${REPO_DIR}/../.venv" && pwd)"
+    else
+      fail "No virtualenv found. Set VENV_DIR or create ${REPO_DIR}/.venv."
+    fi
+  fi
+  [[ -f "${VENV_DIR}/bin/activate" ]] || fail "Missing virtualenv: ${VENV_DIR}"
 
-echo "Work area:     ${WORK_DIR}"
-echo "Repository:    ${REPO_DIR}"
-echo "ROOT dataset:  ${DATASET_DIR}"
-echo "Shard output:  ${OUTPUT_ROOT}"
-echo "ECal transform: ${ECAL_ENERGY_TRANSFORM}"
-echo "TPAD PE transform: ${TPAD_PE_TRANSFORM}"
-echo "Python:        $(command -v "${PYTHON_BIN}")"
-echo "Python version: $("${PYTHON_BIN}" --version 2>&1)"
-echo "Started:       $(date)"
+  cd "${REPO_DIR}"
+  # shellcheck disable=SC1090
+  source "${VENV_DIR}/bin/activate"
+  command -v "${PYTHON_BIN}" >/dev/null 2>&1 || fail "Python executable not found: ${PYTHON_BIN}"
+  "${PYTHON_BIN}" -c "import awkward, ml_ldmx, torch, uproot; print('Python dependencies are available')"
+}
 
-"${PYTHON_BIN}" -c "import awkward, torch, uproot; print('Required imports available: awkward, torch, uproot')"
+dispatch() {
+  [[ -n "${OUTPUT_ROOT}" ]] || fail "Set OUTPUT_ROOT to the destination directory on shared storage."
 
-for electron_count in 2 3; do
-  label="${electron_count}e"
-  input_dir="${DATASET_DIR}/${label}/events"
-  output_dir="${OUTPUT_ROOT}/${label}/events"
-  resume_variable="RESUME_${label^^}_FROM_ROOT_INDEX"
-  resume_from_root_index="${!resume_variable}"
+  if [[ -n "${DATASET_DIR:-}" ]]; then
+    ROOT_2E_DIR="${ROOT_2E_DIR:-${DATASET_DIR}/2e/events}"
+    ROOT_3E_DIR="${ROOT_3E_DIR:-${DATASET_DIR}/3e/events}"
+  fi
+  [[ -n "${ROOT_2E_DIR:-}" ]] || fail "Set ROOT_2E_DIR, or set DATASET_DIR with a 2e/events directory."
+  [[ -n "${ROOT_3E_DIR:-}" ]] || fail "Set ROOT_3E_DIR, or set DATASET_DIR with a 3e/events directory."
+  [[ -d "${ROOT_2E_DIR}" ]] || fail "Missing 2e ROOT directory: ${ROOT_2E_DIR}"
+  [[ -d "${ROOT_3E_DIR}" ]] || fail "Missing 3e ROOT directory: ${ROOT_3E_DIR}"
+  [[ "${MAX_PARALLEL_JOBS}" =~ ^[1-9][0-9]*$ ]] || fail "MAX_PARALLEL_JOBS must be positive."
 
-  echo
-  echo "Tensorizing ${label} from ROOT index ${resume_from_root_index}: ${input_dir} -> ${output_dir}"
-  "${PYTHON_BIN}" -u scripts/preprocess_ecal_tpad_sharded.py \
-    --input-root-dir "${input_dir}" \
-    --electron-count "${electron_count}" \
-    --source-label "${label}" \
-    --output-dir "${output_dir}" \
-    --resume-from-root-index "${resume_from_root_index}" \
-    --read-step-size "${READ_STEP_SIZE}" \
+  setup_environment
+  mkdir -p "${OUTPUT_ROOT}" "${REPO_DIR}/outputs/slurm" "${OUTPUT_ROOT}/_slurm"
+  local run_id="${SLURM_JOB_ID:-manual_$(date +%Y%m%d_%H%M%S)}"
+  PLAN_FILE="${OUTPUT_ROOT}/_slurm/plan_${run_id}.json"
+
+  echo "Repository:       ${REPO_DIR}"
+  echo "2e ROOT input:    ${ROOT_2E_DIR}"
+  echo "3e ROOT input:    ${ROOT_3E_DIR}"
+  echo "Shard output:     ${OUTPUT_ROOT}"
+  echo "Worker limit:     ${MAX_PARALLEL_JOBS}"
+  echo "ECal transform:   ${ECAL_ENERGY_TRANSFORM}"
+  echo "TPad transform:   ${TPAD_PE_TRANSFORM}"
+  echo "Expected events:  2e=${EXPECTED_EVENTS_2E}, 3e=${EXPECTED_EVENTS_3E}"
+
+  if [[ "${RUN_TESTS}" == "1" ]]; then
+    echo "Running the Python test suite..."
+    "${PYTHON_BIN}" -m unittest discover -s tests
+    echo "Running the ROOT-backed tensorization/reader/training smoke test..."
+    ML_LDMX_ROOT_2E_DIR="${ROOT_2E_DIR}" \
+      ML_LDMX_ROOT_3E_DIR="${ROOT_3E_DIR}" \
+      ML_LDMX_ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM}" \
+      ML_LDMX_TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM}" \
+      "${PYTHON_BIN}" -m unittest discover -s tests -p test_sharded_cache_smoke.py
+  fi
+
+  "${PYTHON_BIN}" -u scripts/preprocess_ecal_tpad_array.py plan \
+    --plan-file "${PLAN_FILE}" \
+    --output-root "${OUTPUT_ROOT}" \
+    --source 2 2e "${ROOT_2E_DIR}" \
+    --source 3 3e "${ROOT_3E_DIR}" \
     --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}" \
-    --tpad-pe-transform "${TPAD_PE_TRANSFORM}" \
-    --skip-existing \
-    --skip-failed-root-files
-done
+    --tpad-pe-transform "${TPAD_PE_TRANSFORM}"
 
-echo
-echo "Finished:      $(date)"
-echo "Processed data written below ${OUTPUT_ROOT}"
+  local task_count
+  task_count=$("${PYTHON_BIN}" scripts/preprocess_ecal_tpad_array.py count --plan-file "${PLAN_FILE}")
+  local last_task=$((task_count - 1))
+  echo "Frozen plan:      ${PLAN_FILE}"
+  echo "Array tasks:      ${task_count}"
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "DRY_RUN=1: plan and tests succeeded; no Slurm workers were submitted."
+    return
+  fi
+
+  local worker_submission worker_job_id finalizer_submission finalizer_job_id
+  worker_submission=$(
+    MODE=worker PLAN_FILE="${PLAN_FILE}" REPO_DIR="${REPO_DIR}" OUTPUT_ROOT="${OUTPUT_ROOT}" \
+      sbatch --parsable --export=ALL \
+      --job-name=ml_ldmx_tensor_worker \
+      --array="0-${last_task}%${MAX_PARALLEL_JOBS}" \
+      --cpus-per-task="${CPUS_PER_WORKER}" \
+      --mem="${MEM_PER_WORKER}" \
+      --time="${WORKER_TIME}" \
+      --output="${REPO_DIR}/outputs/slurm/%x_%A_%a.out" \
+      --error="${REPO_DIR}/outputs/slurm/%x_%A_%a.err" \
+      "${REPO_DIR}/scripts/preprocess_production_5M_001_sharded.sbatch"
+  )
+  worker_job_id="${worker_submission%%;*}"
+
+  finalizer_submission=$(
+    MODE=finalize PLAN_FILE="${PLAN_FILE}" REPO_DIR="${REPO_DIR}" OUTPUT_ROOT="${OUTPUT_ROOT}" \
+      sbatch --parsable --export=ALL \
+      --job-name=ml_ldmx_tensor_finalize \
+      --dependency="afterany:${worker_job_id}" \
+      --cpus-per-task=1 \
+      --mem="${FINALIZER_MEM}" \
+      --time="${FINALIZER_TIME}" \
+      --output="${REPO_DIR}/outputs/slurm/%x_%j.out" \
+      --error="${REPO_DIR}/outputs/slurm/%x_%j.err" \
+      "${REPO_DIR}/scripts/preprocess_production_5M_001_sharded.sbatch"
+  )
+  finalizer_job_id="${finalizer_submission%%;*}"
+
+  echo "Worker array job: ${worker_job_id}"
+  echo "Finalizer job:    ${finalizer_job_id}"
+  echo "Track both:       squeue -j ${worker_job_id},${finalizer_job_id}"
+}
+
+run_worker() {
+  [[ -n "${PLAN_FILE}" ]] || fail "Worker received no PLAN_FILE."
+  [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]] || fail "Worker received no SLURM_ARRAY_TASK_ID."
+  setup_environment
+  local worker_args=(
+    scripts/preprocess_ecal_tpad_array.py worker
+    --plan-file "${PLAN_FILE}"
+    --task-index "${SLURM_ARRAY_TASK_ID}"
+    --read-step-size "${READ_STEP_SIZE}"
+  )
+  [[ "${FORCE}" == "1" ]] && worker_args+=(--force)
+  "${PYTHON_BIN}" -u "${worker_args[@]}"
+}
+
+finalize() {
+  [[ -n "${PLAN_FILE}" ]] || fail "Finalizer received no PLAN_FILE."
+  setup_environment
+  local finalize_args=(
+    scripts/preprocess_ecal_tpad_array.py finalize
+    --plan-file "${PLAN_FILE}"
+    --expected-events-2e "${EXPECTED_EVENTS_2E}"
+    --expected-events-3e "${EXPECTED_EVENTS_3E}"
+  )
+  [[ "${ALLOW_FAILED_ROOT_FILES}" == "1" ]] && finalize_args+=(--allow-failed-root-files)
+  [[ "${FULL_VALIDATE}" == "1" ]] && finalize_args+=(--load-all-shards)
+  "${PYTHON_BIN}" -u "${finalize_args[@]}"
+  echo "ML-ready caches: ${OUTPUT_ROOT}/{2e,3e}/events"
+  echo "Summary:         ${OUTPUT_ROOT}/preprocessing_summary.json"
+}
+
+case "${MODE}" in
+  dispatch) dispatch ;;
+  worker) run_worker ;;
+  finalize) finalize ;;
+  *) fail "Unknown MODE: ${MODE}" ;;
+esac

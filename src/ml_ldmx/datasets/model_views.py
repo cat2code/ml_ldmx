@@ -17,6 +17,7 @@ _METADATA_FIELDS = (
 )
 _OPTIONAL_TARGET_FIELDS = ("canonical_y", "fraction_target", "origin_id_fraction_target")
 _OPTIONAL_HIT_FIELDS = ("ecal_input_energy", "ecal_raw_energy")
+_OPTIONAL_TPAD_FIELDS = ("tpad_raw_pe",)
 
 
 def validate_canonical_combined_event(event: dict) -> None:
@@ -59,6 +60,23 @@ def validate_canonical_combined_event(event: dict) -> None:
     for key in _OPTIONAL_HIT_FIELDS:
         if key in event:
             _require_hit_vector(event, key, num_ecal)
+    for key in _OPTIONAL_TPAD_FIELDS:
+        if key in event:
+            value = event[key]
+            if (
+                not isinstance(value, torch.Tensor)
+                or value.ndim != 1
+                or value.shape[0] != num_tpad
+            ):
+                shape = (
+                    tuple(value.shape)
+                    if isinstance(value, torch.Tensor)
+                    else type(value).__name__
+                )
+                raise ValueError(
+                    f"Expected event['{key}'] to align with {num_tpad} TriggerPadTracks, "
+                    f"got {shape}."
+                )
     for key in ("fraction_target", "origin_id_fraction_target"):
         if key in event:
             target = event[key]
@@ -123,6 +141,9 @@ def _combined_view(event: dict) -> dict:
         "ecal_pos": event["ecal_pos"],
         "tpad": event["tpad"],
     }
+    for key in _OPTIONAL_TPAD_FIELDS:
+        if key in event:
+            view[key] = event[key]
     view.update(_hit_targets_and_metadata(event))
     return view
 

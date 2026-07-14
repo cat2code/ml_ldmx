@@ -207,10 +207,11 @@ as `--event-index 123 --event-index 456` in
 `scripts/inspect_hit_classifier_run.py`. Set `--num-events` at least as large
 as the number requested when all selected displays should be written.
 
-New processed caches preserve raw reconstructed ECal energy separately from
-the optionally log-transformed model input. This keeps energy-weighted
-diagnostics physically interpretable. Existing caches remain supported and
-use their stored input-energy vector as a fallback.
+New processed caches preserve raw reconstructed ECal energy and raw
+TriggerPadTracks `pe` separately from their optionally log-transformed model
+inputs. This keeps energy-weighted diagnostics physically interpretable and
+leaves the TriggerPad signal available for future diagnostics. Existing caches
+remain supported and use their stored input-energy vector as a fallback.
 
 ### Pipeline Benchmarking
 

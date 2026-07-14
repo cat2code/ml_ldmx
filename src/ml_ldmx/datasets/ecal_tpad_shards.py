@@ -2,6 +2,7 @@
 
 from bisect import bisect_right
 from collections import OrderedDict
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
@@ -16,6 +17,7 @@ from ml_ldmx.datasets.tensorize import ECAL_ENERGY_TRANSFORMS, TPAD_PE_TRANSFORM
 
 SHARD_CACHE_SCHEMA_VERSION = 1
 SHARD_PAYLOAD_SCHEMA_VERSION = 1
+PARALLEL_PLAN_SCHEMA_VERSION = 1
 FEATURE_LAYOUT = [
     "is_ecal",
     "is_tpad",
@@ -451,6 +453,379 @@ def validate_sharded_tensor_cache(cache_dir, load_shards=True, allow_incomplete=
     return manifest, index
 
 
+def create_parallel_shard_plan(
+    plan_path,
+    output_root,
+    root_specs,
+    valid_labels=(1, 2, 3),
+    filter_noise=False,
+    supervise_noise=True,
+    max_root_files=None,
+    max_events_per_root_file=None,
+    ecal_energy_transform="log1p",
+    tpad_pe_transform="log1p",
+):
+    """Freeze deterministic, parallel-safe work for one or more ROOT sources."""
+    output_root = Path(output_root).resolve()
+    plan_path = Path(plan_path).resolve()
+    status_dir = plan_path.parent / f"{plan_path.stem}_status"
+    tasks = []
+    source_groups = []
+
+    for electron_count, source_label, source_dir in root_specs:
+        sources = _root_sources(
+            [(electron_count, source_label, source_dir)],
+            max_root_files=max_root_files,
+        )
+        cache_dir = output_root / source_label / "events"
+        source_groups.append(
+            {
+                "electron_count": int(electron_count) if electron_count is not None else None,
+                "source_label": source_label,
+                "cache_dir": str(cache_dir),
+                "root_sources": sources,
+            }
+        )
+        for class_shard_index, source in enumerate(sources, start=1):
+            task_index = len(tasks)
+            tasks.append(
+                {
+                    "task_index": task_index,
+                    "class_shard_index": class_shard_index,
+                    "electron_count": source["electron_count"],
+                    "source_label": source_label,
+                    "source": source,
+                    "cache_dir": str(cache_dir),
+                    "shard_path": str(cache_dir / "shards" / f"shard_{class_shard_index:06d}.pt"),
+                    "status_path": str(status_dir / f"task_{task_index:06d}.json"),
+                }
+            )
+
+    if not tasks:
+        raise ValueError("No ROOT files were selected for parallel preprocessing.")
+
+    preprocessing_spec = _cache_spec(
+        root_sources=[],
+        valid_labels=tuple(valid_labels),
+        filter_noise=filter_noise,
+        supervise_noise=supervise_noise,
+        max_events_per_root_file=max_events_per_root_file,
+        ecal_energy_transform=ecal_energy_transform,
+        tpad_pe_transform=tpad_pe_transform,
+    )
+    preprocessing_spec.pop("root_sources")
+    plan = {
+        "plan_schema_version": PARALLEL_PLAN_SCHEMA_VERSION,
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "output_root": str(output_root),
+        "status_dir": str(status_dir),
+        "preprocessing_spec": preprocessing_spec,
+        "source_groups": source_groups,
+        "tasks": tasks,
+    }
+    status_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(plan_path, plan)
+    return plan
+
+
+def load_parallel_shard_plan(plan_path):
+    plan_path = Path(plan_path)
+    plan = _load_json(plan_path)
+    if plan.get("plan_schema_version") != PARALLEL_PLAN_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported parallel shard plan: {plan_path}")
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError(f"Parallel shard plan contains no tasks: {plan_path}")
+    if [task.get("task_index") for task in tasks] != list(range(len(tasks))):
+        raise ValueError(f"Parallel shard task indices are not contiguous: {plan_path}")
+    return plan
+
+
+def _parallel_payload_is_valid(payload, task, preprocessing_spec):
+    num_events = _validate_shard_payload(payload, task["source"])
+    if (
+        num_events is None
+        or num_events == 0
+        or payload.get("preprocessing_spec") != preprocessing_spec
+    ):
+        return None
+    return num_events
+
+
+def prepare_parallel_shard_task(
+    plan_path,
+    task_index,
+    read_step_size=500,
+    force=False,
+    logger=None,
+):
+    """Tensorize one plan task without writing shared cache metadata."""
+    from ml_ldmx.datasets.ecal_tpad_loading import (
+        attach_root_source_metadata,
+        ecal_tpad_event_to_tensors,
+    )
+
+    logger = logger or logging.getLogger(__name__)
+    plan = load_parallel_shard_plan(plan_path)
+    task_index = int(task_index)
+    if task_index < 0 or task_index >= len(plan["tasks"]):
+        raise IndexError(f"Task index {task_index} is outside 0..{len(plan['tasks']) - 1}.")
+    task = plan["tasks"][task_index]
+    spec = plan["preprocessing_spec"]
+    source = task["source"]
+    shard_path = Path(task["shard_path"])
+    status_path = Path(task["status_path"])
+    shard_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        num_events = None
+        reused = False
+        if shard_path.exists() and not force:
+            try:
+                num_events = _parallel_payload_is_valid(_load_torch(shard_path), task, spec)
+            except Exception:
+                num_events = None
+            reused = num_events is not None
+
+        if num_events is None:
+            logger.info("Tensorizing %s -> %s", source["path"], shard_path)
+            events = []
+            for local_entry, raw_event in iter_ecal_rechits_with_truth_and_triggerpad_context(
+                source["path"],
+                max_events=spec["max_events_per_root_file"],
+                step_size=read_step_size,
+            ):
+                local_event_idx = len(events)
+                event = ecal_tpad_event_to_tensors(
+                    raw_event,
+                    event_idx=local_event_idx,
+                    valid_labels=tuple(spec["valid_labels"]),
+                    target_mode="physical-origin",
+                    filter_noise=spec["filter_noise"],
+                    supervise_noise=spec["supervise_noise"],
+                    ecal_energy_transform=spec["ecal_energy_transform"],
+                    tpad_pe_transform=spec["tpad_pe_transform"],
+                )
+                attach_root_source_metadata(
+                    event,
+                    {"file": source["name"], "entry": local_entry},
+                    global_event_idx=local_event_idx,
+                    electron_count=source["electron_count"],
+                    source_label=source["source_label"],
+                )
+                events.append(event)
+
+            payload = {
+                "schema_version": SHARD_PAYLOAD_SCHEMA_VERSION,
+                "source": source,
+                "preprocessing_spec": spec,
+                "events": events,
+            }
+            num_events = _parallel_payload_is_valid(payload, task, spec)
+            if num_events is None:
+                raise ValueError(f"Worker produced an invalid in-memory shard for {source['path']}")
+            temporary_path = shard_path.with_suffix(shard_path.suffix + f".task-{task_index}.tmp")
+            torch.save(payload, temporary_path)
+            temporary_path.replace(shard_path)
+            if not shard_path.exists() or shard_path.stat().st_size == 0:
+                raise ValueError(f"Worker did not write a non-empty shard: {shard_path}")
+
+        status = {
+            "status": "complete",
+            "task_index": task_index,
+            "source": source,
+            "shard_path": str(shard_path),
+            "num_events": int(num_events),
+            "reused": reused,
+        }
+        _write_json(status_path, status)
+        logger.info(
+            "%s task %s with %s event(s): %s",
+            "Reused" if reused else "Completed",
+            task_index,
+            num_events,
+            shard_path,
+        )
+        return status
+    except Exception as exc:
+        _write_json(
+            status_path,
+            {
+                "status": "failed",
+                "task_index": task_index,
+                "source": source,
+                "shard_path": str(shard_path),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        raise
+
+
+def _validate_ml_ready_event(event, ecal_energy_transform, tpad_pe_transform):
+    from ml_ldmx.datasets.model_views import validate_canonical_combined_event
+    from ml_ldmx.datasets.tensorize import transform_ecal_energy, transform_tpad_pe
+
+    validate_canonical_combined_event(event)
+    for key in ("ecal_raw_energy", "tpad_raw_pe"):
+        if key not in event:
+            raise ValueError(f"ML-ready shard event is missing preserved field {key!r}.")
+
+    ecal_raw_energy = event["ecal_raw_energy"].to(dtype=torch.float32)
+    expected_ecal = transform_ecal_energy(ecal_raw_energy, mode=ecal_energy_transform)
+    if not torch.allclose(event["ecal_input_energy"], expected_ecal):
+        raise ValueError("Stored ECal input energy does not match its declared transform.")
+    if not torch.allclose(event["x"][event["ecal_mask"], 5], expected_ecal):
+        raise ValueError("Combined ECal feature column does not match preserved raw energy.")
+
+    tpad_raw_pe = event["tpad_raw_pe"].to(dtype=torch.float32)
+    expected_tpad = transform_tpad_pe(tpad_raw_pe, mode=tpad_pe_transform)
+    if not torch.allclose(event["tpad"][:, 1], expected_tpad):
+        raise ValueError("Stored TriggerPad pe input does not match its declared transform.")
+    if not torch.allclose(event["x"][event["tpad_mask"], 7], expected_tpad):
+        raise ValueError("Combined TriggerPad feature column does not match preserved raw pe.")
+
+
+def validate_ml_ready_sharded_cache(cache_dir, load_all_shards=False):
+    """Validate cache structure and sampled raw-to-input feature transforms."""
+    manifest, index = validate_sharded_tensor_cache(cache_dir, load_shards=load_all_shards)
+    spec = manifest["cache_spec"]
+    dataset = ShardedECalTpadDataset(cache_dir, shard_cache_size=1)
+    if len(dataset) == 0:
+        raise ValueError(f"ML-ready shard cache contains no events: {cache_dir}")
+    sample_indices = sorted({0, len(dataset) // 2, len(dataset) - 1})
+    for event_index in sample_indices:
+        _validate_ml_ready_event(
+            dataset[event_index],
+            ecal_energy_transform=spec["ecal_energy_transform"],
+            tpad_pe_transform=spec["tpad_pe_transform"],
+        )
+    return manifest, index
+
+
+def finalize_parallel_shard_plan(
+    plan_path,
+    expected_events_by_label=None,
+    allow_failed_root_files=False,
+    load_all_shards=False,
+):
+    """Assemble cache metadata only after all planned workers are accounted for."""
+    plan = load_parallel_shard_plan(plan_path)
+    expected_events_by_label = expected_events_by_label or {}
+    tasks_by_label = {}
+    problems = []
+
+    for task in plan["tasks"]:
+        tasks_by_label.setdefault(task["source_label"], []).append(task)
+        status_path = Path(task["status_path"])
+        if not status_path.exists():
+            problems.append(f"task {task['task_index']}: missing status for {task['source']['path']}")
+            continue
+        status = _load_json(status_path)
+        if status.get("task_index") != task["task_index"] or status.get("source") != task["source"]:
+            problems.append(f"task {task['task_index']}: status does not match the frozen plan")
+        elif status.get("status") != "complete" and not allow_failed_root_files:
+            problems.append(
+                f"task {task['task_index']}: {status.get('error_type', 'failed')}: "
+                f"{status.get('error', 'no error message')}"
+            )
+
+    if problems:
+        preview = "\n".join(f"  - {problem}" for problem in problems[:20])
+        remainder = "" if len(problems) <= 20 else f"\n  - ... and {len(problems) - 20} more"
+        raise RuntimeError(f"Cannot finalize incomplete parallel preprocessing:\n{preview}{remainder}")
+
+    summaries = []
+    for group in plan["source_groups"]:
+        source_label = group["source_label"]
+        cache_dir = Path(group["cache_dir"])
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        shard_entries = []
+        skipped_sources = []
+        total_events = 0
+
+        tasks = sorted(tasks_by_label[source_label], key=lambda task: task["class_shard_index"])
+        for task in tasks:
+            status = _load_json(task["status_path"])
+            if status.get("status") != "complete":
+                skipped_sources.append(
+                    {
+                        "source": task["source"],
+                        "error_type": status.get("error_type", "WorkerError"),
+                        "error": status.get("error", "Worker did not complete."),
+                    }
+                )
+                continue
+
+            shard_path = Path(task["shard_path"])
+            if not shard_path.exists() or shard_path.stat().st_size == 0:
+                raise ValueError(f"Completed worker shard is missing or empty: {shard_path}")
+            num_events = status.get("num_events")
+            if not isinstance(num_events, int) or num_events < 0:
+                raise ValueError(f"Completed worker has an invalid event count: {task['status_path']}")
+            shard_entries.append(
+                {
+                    "path": str(shard_path.relative_to(cache_dir)).replace("\\", "/"),
+                    "source": task["source"],
+                    "num_events": int(num_events),
+                    "event_start": total_events,
+                    "event_stop": total_events + int(num_events),
+                }
+            )
+            total_events += int(num_events)
+
+        expected_events = expected_events_by_label.get(source_label)
+        if expected_events not in (None, 0) and total_events != int(expected_events):
+            raise ValueError(
+                f"{source_label} produced {total_events} events; expected {int(expected_events)}. "
+                "The cache was not finalized."
+            )
+        if not shard_entries:
+            raise ValueError(f"No successful shards are available for {source_label}.")
+
+        root_sources = group["root_sources"]
+        spec = dict(plan["preprocessing_spec"])
+        spec["root_sources"] = root_sources
+        manifest = {
+            "cache_schema_version": SHARD_CACHE_SCHEMA_VERSION,
+            "format": "ecal_tpad_root_file_shards",
+            "cache_spec": spec,
+            "feature_layout": FEATURE_LAYOUT,
+            "filter_noise": spec["filter_noise"],
+            "supervise_noise": spec["supervise_noise"],
+            "ecal_energy_transform": spec["ecal_energy_transform"],
+            "tpad_pe_transform": spec["tpad_pe_transform"],
+            "valid_labels": spec["valid_labels"],
+            "parallel_plan": str(Path(plan_path).resolve()),
+        }
+        _write_json(cache_dir / "manifest.json", manifest)
+        _write_json(
+            cache_dir / "index.json",
+            _index_payload(shard_entries, skipped_sources, total_events),
+        )
+        validate_ml_ready_sharded_cache(cache_dir, load_all_shards=load_all_shards)
+        summaries.append(
+            {
+                "electron_count": group["electron_count"],
+                "source_label": source_label,
+                "cache_dir": str(cache_dir),
+                "num_root_files": len(root_sources),
+                "num_shards": len(shard_entries),
+                "num_events": total_events,
+                "num_skipped_root_files": len(skipped_sources),
+            }
+        )
+
+    summary = {
+        "completed_utc": datetime.now(timezone.utc).isoformat(),
+        "plan": str(Path(plan_path).resolve()),
+        "preprocessing_spec": plan["preprocessing_spec"],
+        "sources": summaries,
+    }
+    _write_json(Path(plan["output_root"]) / "preprocessing_summary.json", summary)
+    return summary
+
+
 class ShardedECalTpadDataset(Dataset):
     """Lazy event dataset backed by one tensor shard per source ROOT file."""
 
@@ -568,6 +943,7 @@ class ShardedECalTpadDataset(Dataset):
         entry = self.shards[shard_idx]
         local_index = index - entry["event_start"]
         event = dict(self._load_shard(shard_idx)["events"][local_index])
+        event["event_idx"] = torch.tensor(index, dtype=torch.long)
         if self.event_transform is not None:
             event = self.event_transform(event)
         return event
@@ -698,6 +1074,7 @@ class MultiShardedECalTpadDataset(Dataset):
         source = self.sources[source_idx]
         local_index = index - self.offsets[source_idx]
         event = dict(source["dataset"][local_index])
+        event["event_idx"] = torch.tensor(index, dtype=torch.long)
         if source["electron_count"] is not None:
             event["electron_count"] = torch.tensor(int(source["electron_count"]), dtype=torch.long)
         event["source_label"] = source["source_label"]
