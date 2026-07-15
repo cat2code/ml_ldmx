@@ -10,9 +10,17 @@ import numpy as np
 
 
 PROFILE_METRICS = {
-    "min_normalized_shower_separation_xy": "min normalized shower separation XY",
-    "early_min_normalized_shower_separation_xy": (
-        "early-layer min normalized shower separation XY"
+    "contributor_min_normalized_shower_separation_xy": (
+        "any-contributor min normalized separation XY"
+    ),
+    "early_contributor_min_normalized_shower_separation_xy": (
+        "first-three-layer any-contributor min normalized separation XY"
+    ),
+    "dominant_min_normalized_shower_separation_xy": (
+        "dominant-only min normalized separation XY"
+    ),
+    "early_dominant_min_normalized_shower_separation_xy": (
+        "first-three-layer dominant-only min normalized separation XY"
     ),
     "ambiguous_hit_fraction_xy": "geometrically ambiguous hit fraction",
     "num_hits": "ECal hits",
@@ -30,6 +38,14 @@ GEOMETRY_FIELDS = (
     "early_min_origin_centroid_distance_xy",
     "min_normalized_shower_separation_xy",
     "early_min_normalized_shower_separation_xy",
+    "contributor_min_centroid_distance_xy",
+    "contributor_min_normalized_shower_separation_xy",
+    "early_contributor_min_normalized_shower_separation_xy",
+    "first_layer_contributor_min_centroid_distance_xy",
+    "dominant_min_centroid_distance_xy",
+    "dominant_min_normalized_shower_separation_xy",
+    "early_dominant_min_normalized_shower_separation_xy",
+    "first_layer_dominant_min_centroid_distance_xy",
     "mean_shower_width_xy",
     "early_mean_shower_width_xy",
     "ambiguous_hit_fraction_xy",
@@ -257,7 +273,8 @@ def mean_confidence_interval(values, bootstrap_samples=400, seed=7, exact_limit=
     return mean, float(low), float(high), "event_bootstrap"
 
 
-def _quantile_edges(values, num_bins):
+def quantile_edges(values, num_bins):
+    """Return unique equal-population bin edges for finite values."""
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]
     if values.size < 2 or np.unique(values).size < 2:
@@ -278,7 +295,7 @@ def build_binned_profiles(
     for metric in PROFILE_METRICS:
         x_values = [_finite_number(row.get(metric)) for row in rows]
         finite_x = [value for value in x_values if value is not None]
-        edges = _quantile_edges(finite_x, num_bins=num_bins)
+        edges = quantile_edges(finite_x, num_bins=num_bins)
         if edges is None:
             continue
         for bin_idx in range(edges.size - 1):
@@ -459,8 +476,10 @@ def interesting_event_groups(
             "electron_count",
             "num_truth_classes",
             "num_hits",
-            "min_normalized_shower_separation_xy",
-            "early_min_normalized_shower_separation_xy",
+            "contributor_min_normalized_shower_separation_xy",
+            "early_contributor_min_normalized_shower_separation_xy",
+            "dominant_min_normalized_shower_separation_xy",
+            "early_dominant_min_normalized_shower_separation_xy",
             "ambiguous_hit_fraction_xy",
             first_field,
             second_field,

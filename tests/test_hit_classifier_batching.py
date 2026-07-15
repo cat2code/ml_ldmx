@@ -92,6 +92,7 @@ class HitClassifierBatchingTest(unittest.TestCase):
             out_dim=3,
         )
         model.eval()
+        self.assertFalse(model.encoder.enable_nested_tensor)
         views = [
             _view(torch.randn(3, 3), [True, True, True], [0, 1, 2]),
             _view(torch.randn(1, 3), [True], [1]),

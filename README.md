@@ -60,12 +60,6 @@ uproot, awkward, NumPy, and Matplotlib.
 Run the reusable smoke and unit tests from the repository root:
 
 ```bash
-python -m pytest tests -q
-```
-
-For the standard library runner, use:
-
-```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
@@ -163,6 +157,10 @@ PyTorch Geometric `torch-cluster` runtime dependency.
 
 ### Inspecting a Saved Baseline Run
 
+For the complete local 20,000-event 2e/3e Transformer showcase, including the
+exact training, resume, inspection, and interactive-display commands, see
+[`SUPERVISOR_DEMO.md`](SUPERVISOR_DEMO.md).
+
 Re-run validation diagnostics and create interactive worst/median/best event
 displays from a saved checkpoint without retraining:
 
@@ -180,7 +178,10 @@ another checkpoint. For a quick pass over a large split, add
 `--max-inspection-events 1000`. If a run has moved between the cluster and a
 local machine, point it at the relocated data with `--processed-dir`,
 `--processed-cache`, `--processed-cache-root`, or repeated
-`--processed-source` arguments.
+`--processed-source` arguments. The inspection bundle includes the event
+accuracy distribution, diagnostic-correlation panels, accuracy and
+energy-weighted-accuracy profiles versus shower separation, and static plus
+interactive worst/median/best event displays.
 
 ### Comparing Two Baseline Runs
 
@@ -199,8 +200,13 @@ per-event results, binned accuracy versus shower overlap and hit count,
 confidence intervals, electron-count summaries, paired model differences, and
 lists of events where both models fail or one model clearly outperforms the
 other. The normalized overlap diagnostic is the minimum centroid separation
-divided by the two showers' combined RMS width. An early-shower variant uses
-the first three ECal layers.
+divided by the two showers' combined RMS width. By default, a hit belongs to
+every shower with a positive truth contribution, with each membership counted
+once and no fraction or energy weighting. Explicit `dominant_*` diagnostics
+provide the alternative in which each hit belongs only to its largest-energy
+origin. The primary definition uses all ECal layers, an `early_*` variant uses
+the first three layers, and first-layer centroid distances are included in the
+diagnostic-correlation plot.
 
 Render event indices selected by the comparison with repeated arguments such
 as `--event-index 123 --event-index 456` in

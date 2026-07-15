@@ -34,6 +34,7 @@ from ml_ldmx.train.utils import resolve_device
 from ml_ldmx.viz.training import (
     plot_event_accuracy_overview,
     plot_event_diagnostic_correlations,
+    plot_shower_separation_profiles,
 )
 
 
@@ -412,6 +413,12 @@ def main():
         correlation_plot_path,
         f"{args.model} {inspection_args.split} event diagnostics",
     )
+    separation_plot_path = output_dir / f"{inspection_args.split}_shower_separation_profiles.png"
+    plot_shower_separation_profiles(
+        records,
+        separation_plot_path,
+        f"{args.model} {inspection_args.split} accuracy versus shower separation",
+    )
 
     if inspection_args.event_index:
         selection = {
@@ -450,6 +457,8 @@ def main():
     generated_paths = [record_paths["json"], record_paths["csv"], accuracy_plot_path, selection_path]
     if correlation_plot_path.exists():
         generated_paths.append(correlation_plot_path)
+    if separation_plot_path.exists():
+        generated_paths.append(separation_plot_path)
     generated_paths.extend(display_paths)
     manifest = {
         "run_dir": str(run_dir),

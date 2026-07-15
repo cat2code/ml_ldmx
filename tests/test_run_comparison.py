@@ -39,6 +39,10 @@ def _record(event_idx, accuracy, model_offset=0.0):
         "early_min_origin_centroid_distance_xy": 9.0 * separation,
         "min_normalized_shower_separation_xy": separation,
         "early_min_normalized_shower_separation_xy": 0.8 * separation,
+        "contributor_min_normalized_shower_separation_xy": separation,
+        "early_contributor_min_normalized_shower_separation_xy": 0.8 * separation,
+        "dominant_min_normalized_shower_separation_xy": 1.1 * separation,
+        "early_dominant_min_normalized_shower_separation_xy": 0.9 * separation,
         "mean_shower_width_xy": 4.0,
         "early_mean_shower_width_xy": 3.0,
         "ambiguous_hit_fraction_xy": max(0.0, 0.5 - 0.03 * event_idx),
@@ -128,7 +132,12 @@ class RunComparisonTest(unittest.TestCase):
             difference_threshold=0.04,
         )
 
-        self.assertTrue(any(row["metric"] == "min_normalized_shower_separation_xy" for row in profiles))
+        self.assertTrue(
+            any(
+                row["metric"] == "contributor_min_normalized_shower_separation_xy"
+                for row in profiles
+            )
+        )
         self.assertEqual({row["electron_count"] for row in multiplicity}, {2, 3})
         self.assertTrue(groups["both_fail"])
         self.assertTrue(groups["transformer_better"])

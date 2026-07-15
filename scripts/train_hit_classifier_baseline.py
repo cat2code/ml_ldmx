@@ -64,6 +64,7 @@ from ml_ldmx.viz.training import (
     plot_event_accuracy_overview,
     plot_event_diagnostic_correlations,
     plot_history,
+    plot_shower_separation_profiles,
 )
 
 
@@ -995,6 +996,12 @@ def main():
         val_diagnostic_plot_path,
         f"{args.model} validation event diagnostics",
     )
+    val_separation_plot_path = run_dir / "val_shower_separation_profiles.png"
+    plot_shower_separation_profiles(
+        val_event_records,
+        val_separation_plot_path,
+        f"{args.model} validation accuracy versus shower separation",
+    )
     representative_selection = select_representative_events(
         val_event_records,
         limit_per_group=max(3, args.num_diagnostic_event_displays),
@@ -1018,6 +1025,13 @@ def main():
     else:
         logger.info(
             "Skipped validation diagnostic-correlation plot; need at least two finite events per panel."
+        )
+    if val_separation_plot_path.exists():
+        validation_plot_paths.append(val_separation_plot_path)
+    else:
+        logger.info(
+            "Skipped validation shower-separation profiles; need finite separation values "
+            "for at least one event multiplicity."
         )
     logger.info(
         "Saved validation event diagnostics: %s, %s, plots=%s, representative displays=%s",

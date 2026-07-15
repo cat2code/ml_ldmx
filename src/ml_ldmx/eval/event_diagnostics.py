@@ -175,34 +175,53 @@ def _centroid_distance_stats(centroids, radius):
     return min_distance, mean_distance, within_radius
 
 
-def _weighted_shower_moments(pos_xy, labels, weights=None):
-    valid = labels >= 0
-    if not bool(valid.any().item()):
-        return None, None, []
-    present_labels = sorted({int(label) for label in labels[valid].tolist()})
+def contributor_shower_membership(fraction_target):
+    """Return binary hit membership for every origin with a positive contribution."""
+    fractions = _to_2d_cpu_tensor(fraction_target, dtype=torch.float64)
+    if fractions is None or fractions.ndim != 2:
+        return None
+    membership = torch.isfinite(fractions) & (fractions > 0.0)
+    active_columns = membership.any(dim=0)
+    return membership[:, active_columns]
+
+
+def dominant_shower_membership(labels):
+    """Return exclusive binary hit membership from dominant-origin labels."""
+    labels = _to_1d_cpu_tensor(labels, dtype=torch.long)
+    if labels is None:
+        return None
+    present_labels = sorted({int(label) for label in labels[labels >= 0].tolist()})
+    if not present_labels:
+        return torch.zeros((labels.shape[0], 0), dtype=torch.bool)
+    return torch.stack([labels == label for label in present_labels], dim=1)
+
+
+def _shower_moments_from_membership(pos_xy, membership):
+    if membership is None:
+        return None, None
+    pos_xy = _to_2d_cpu_tensor(pos_xy, dtype=torch.float64)
+    membership = _to_2d_cpu_tensor(membership, dtype=torch.bool)
+    if pos_xy is None or pos_xy.ndim != 2 or pos_xy.shape[1] != 2:
+        raise ValueError("pos_xy must have shape [num_hits, 2].")
+    if membership.ndim != 2 or membership.shape[0] != pos_xy.shape[0]:
+        raise ValueError("membership must have shape [num_hits, num_showers].")
+
+    active_columns = membership.any(dim=0)
+    membership = membership[:, active_columns]
     centroids = []
     widths = []
-    for label in present_labels:
-        mask = labels == label
-        shower_pos = pos_xy[mask].to(dtype=torch.float64)
+    for shower_idx in range(membership.shape[1]):
+        shower_pos = pos_xy[membership[:, shower_idx]]
         if shower_pos.numel() == 0:
             continue
-        shower_weights = (
-            weights[mask].to(dtype=torch.float64).clamp_min(0.0)
-            if weights is not None
-            else torch.ones((shower_pos.shape[0],), dtype=torch.float64)
-        )
-        if float(shower_weights.sum().item()) <= 0.0:
-            shower_weights = torch.ones_like(shower_weights)
-        total_weight = shower_weights.sum()
-        centroid = (shower_pos * shower_weights[:, None]).sum(dim=0) / total_weight
+        centroid = shower_pos.mean(dim=0)
         squared_radius = ((shower_pos - centroid) ** 2).sum(dim=1)
-        width = torch.sqrt((squared_radius * shower_weights).sum() / total_weight)
+        width = torch.sqrt(squared_radius.mean())
         centroids.append(centroid)
         widths.append(width)
     if not centroids:
-        return None, None, []
-    return torch.stack(centroids), torch.stack(widths), present_labels
+        return None, None
+    return torch.stack(centroids), torch.stack(widths)
 
 
 def _normalized_separation_stats(centroids, widths):
@@ -226,21 +245,47 @@ def _normalized_separation_stats(centroids, widths):
     return _finite_float(values.min().item()), _mean_or_none(values)
 
 
-def _shower_overlap_summary(pos_xy, labels, weights=None, prefix=""):
-    centroids, widths, _present_labels = _weighted_shower_moments(
-        pos_xy,
-        labels,
-        weights=weights,
+def projected_shower_geometry(pos_xy, membership, centroid_radius_mm=None):
+    """Summarize projected shower centroids, radial widths, and pair separations."""
+    centroids, widths = _shower_moments_from_membership(pos_xy, membership)
+    min_distance, mean_distance, within_radius = _centroid_distance_stats(
+        centroids,
+        radius=centroid_radius_mm,
     )
     minimum, mean = _normalized_separation_stats(centroids, widths)
     return {
-        f"{prefix}min_normalized_shower_separation_xy": minimum,
-        f"{prefix}mean_normalized_shower_separation_xy": mean,
-        f"{prefix}mean_shower_width_xy": _mean_or_none(widths),
-        f"{prefix}max_shower_width_xy": (
+        "num_showers": 0 if widths is None else int(widths.numel()),
+        "min_centroid_distance_xy": min_distance,
+        "mean_centroid_distance_xy": mean_distance,
+        "max_centroids_within_radius_xy": within_radius,
+        "min_normalized_shower_separation_xy": minimum,
+        "mean_normalized_shower_separation_xy": mean,
+        "mean_shower_width_xy": _mean_or_none(widths),
+        "max_shower_width_xy": (
             None if widths is None or widths.numel() == 0 else _finite_float(widths.max().item())
         ),
     }
+
+
+def _named_shower_geometry(geometry, membership_name, layer_prefix=""):
+    return {
+        f"{layer_prefix}{membership_name}_{key}": value
+        for key, value in geometry.items()
+    }
+
+
+def _default_geometry_aliases(summary, contributor_geometry, layer_prefix=""):
+    aliases = {
+        "min_centroid_distance_xy": "min_origin_centroid_distance_xy",
+        "mean_centroid_distance_xy": "mean_origin_centroid_distance_xy",
+        "max_centroids_within_radius_xy": "max_origin_centroids_within_radius_xy",
+        "min_normalized_shower_separation_xy": "min_normalized_shower_separation_xy",
+        "mean_normalized_shower_separation_xy": "mean_normalized_shower_separation_xy",
+        "mean_shower_width_xy": "mean_shower_width_xy",
+        "max_shower_width_xy": "max_shower_width_xy",
+    }
+    for source_key, alias_key in aliases.items():
+        summary[f"{layer_prefix}{alias_key}"] = contributor_geometry[source_key]
 
 
 def _hit_centroid_margin_summary(pos_xy, labels, weights=None):
@@ -308,6 +353,23 @@ def geometry_metric_summary(
     if labels is None:
         labels = true_class
 
+    fraction_target = None
+    fraction_target_name = None
+    for name in ("origin_id_fraction_target", "fraction_target"):
+        candidate = _to_2d_cpu_tensor(view.get(name), dtype=torch.float32)
+        if candidate is not None and candidate.ndim == 2 and candidate.shape[0] == num_hits:
+            fraction_target = candidate
+            fraction_target_name = name
+            break
+
+    dominant_memberships = dominant_shower_membership(labels)
+    contributor_memberships = contributor_shower_membership(fraction_target)
+    if contributor_memberships is None:
+        contributor_memberships = dominant_memberships
+        contributor_membership_source = "dominant_origin_fallback"
+    else:
+        contributor_membership_source = fraction_target_name
+
     raw_energy_weights = _optional_aligned_hit_vector(
         view,
         names=("ecal_raw_energy",),
@@ -322,13 +384,13 @@ def geometry_metric_summary(
     )
     if raw_energy_weights is not None:
         energy_weights = raw_energy_weights
-        overlap_weighting = "raw_reconstructed_energy"
+        ambiguity_weighting = "raw_reconstructed_energy"
     elif input_energy_weights is not None:
         energy_weights = input_energy_weights
-        overlap_weighting = "model_input_energy_fallback"
+        ambiguity_weighting = "model_input_energy_fallback"
     else:
         energy_weights = None
-        overlap_weighting = "uniform"
+        ambiguity_weighting = "uniform"
 
     valid_labels = labels >= 0
     present_labels = sorted({int(label) for label in labels[valid_labels].tolist()})
@@ -337,7 +399,10 @@ def geometry_metric_summary(
 
     summary = {
         "diagnostic_centroid_radius_mm": float(centroid_radius_mm),
-        "shower_overlap_weighting": overlap_weighting,
+        "shower_separation_default": "binary_any_contributor",
+        "shower_overlap_weighting": "uniform_binary_membership",
+        "contributor_membership_source": contributor_membership_source,
+        "ambiguity_weighting": ambiguity_weighting,
         "num_truth_classes": len(present_labels),
         "num_ecal_layers": int(torch.unique(z_values).numel()),
         "ecal_z_min": _finite_float(z_values.min().item()) if num_hits else None,
@@ -358,19 +423,19 @@ def geometry_metric_summary(
         }
     )
 
-    centroids_xy, _labels_xy = _centroids_by_label(pos, labels, dims=[0, 1])
-    min_distance, mean_distance, within_radius = _centroid_distance_stats(
-        centroids_xy,
-        radius=centroid_radius_mm,
+    contributor_geometry = projected_shower_geometry(
+        xy,
+        contributor_memberships,
+        centroid_radius_mm=centroid_radius_mm,
     )
-    summary.update(
-        {
-            "min_origin_centroid_distance_xy": min_distance,
-            "mean_origin_centroid_distance_xy": mean_distance,
-            "max_origin_centroids_within_radius_xy": within_radius,
-        }
+    dominant_geometry = projected_shower_geometry(
+        xy,
+        dominant_memberships,
+        centroid_radius_mm=centroid_radius_mm,
     )
-    summary.update(_shower_overlap_summary(xy, labels, weights=energy_weights))
+    summary.update(_named_shower_geometry(contributor_geometry, "contributor"))
+    summary.update(_named_shower_geometry(dominant_geometry, "dominant"))
+    _default_geometry_aliases(summary, contributor_geometry)
     summary.update(_hit_centroid_margin_summary(xy, labels, weights=energy_weights))
 
     if num_hits:
@@ -379,36 +444,42 @@ def geometry_metric_summary(
         early_mask = torch.isin(z_values, early_z)
         early_labels = labels[early_mask]
         early_pos = pos[early_mask]
-        early_weights = energy_weights[early_mask] if energy_weights is not None else None
         early_valid_labels = early_labels >= 0
         early_present_labels = sorted(
             {int(label) for label in early_labels[early_valid_labels].tolist()}
         )
-        early_centroids, _early_labels = _centroids_by_label(
-            early_pos,
-            early_labels,
-            dims=[0, 1],
+        early_contributor_geometry = projected_shower_geometry(
+            early_pos[:, :2],
+            contributor_memberships[early_mask],
+            centroid_radius_mm=None,
         )
-        early_min_distance, early_mean_distance, _early_within_radius = (
-            _centroid_distance_stats(early_centroids, radius=None)
+        early_dominant_geometry = projected_shower_geometry(
+            early_pos[:, :2],
+            dominant_memberships[early_mask],
+            centroid_radius_mm=None,
         )
         summary.update(
             {
                 "early_layer_count": int(early_z.numel()),
                 "early_layer_num_hits": int(early_mask.sum().item()),
                 "early_layer_num_truth_classes": len(early_present_labels),
-                "early_min_origin_centroid_distance_xy": early_min_distance,
-                "early_mean_origin_centroid_distance_xy": early_mean_distance,
             }
         )
         summary.update(
-            _shower_overlap_summary(
-                early_pos[:, :2],
-                early_labels,
-                weights=early_weights,
-                prefix="early_",
+            _named_shower_geometry(
+                early_contributor_geometry,
+                "contributor",
+                layer_prefix="early_",
             )
         )
+        summary.update(
+            _named_shower_geometry(
+                early_dominant_geometry,
+                "dominant",
+                layer_prefix="early_",
+            )
+        )
+        _default_geometry_aliases(summary, early_contributor_geometry, layer_prefix="early_")
 
         first_z = z_values.min()
         first_layer_mask = torch.isclose(
@@ -423,21 +494,38 @@ def geometry_metric_summary(
         first_present_labels = sorted(
             {int(label) for label in first_labels[first_valid_labels].tolist()}
         )
-        first_centroids, _first_labels = _centroids_by_label(first_pos, first_labels, dims=[0, 1])
-        min_distance, mean_distance, within_radius = _centroid_distance_stats(
-            first_centroids,
-            radius=centroid_radius_mm,
+        first_contributor_geometry = projected_shower_geometry(
+            first_pos[:, :2],
+            contributor_memberships[first_layer_mask],
+            centroid_radius_mm=centroid_radius_mm,
+        )
+        first_dominant_geometry = projected_shower_geometry(
+            first_pos[:, :2],
+            dominant_memberships[first_layer_mask],
+            centroid_radius_mm=centroid_radius_mm,
         )
         summary.update(
             {
                 "first_layer_z": _finite_float(first_z.item()),
                 "first_layer_num_hits": int(first_layer_mask.sum().item()),
                 "first_layer_num_truth_classes": len(first_present_labels),
-                "first_layer_min_origin_centroid_distance_xy": min_distance,
-                "first_layer_mean_origin_centroid_distance_xy": mean_distance,
-                "first_layer_max_origin_centroids_within_radius_xy": within_radius,
             }
         )
+        summary.update(
+            _named_shower_geometry(
+                first_contributor_geometry,
+                "contributor",
+                layer_prefix="first_layer_",
+            )
+        )
+        summary.update(
+            _named_shower_geometry(
+                first_dominant_geometry,
+                "dominant",
+                layer_prefix="first_layer_",
+            )
+        )
+        _default_geometry_aliases(summary, first_contributor_geometry, layer_prefix="first_layer_")
 
     return summary
 

@@ -8,7 +8,11 @@ import torch.nn as nn
 
 from ml_ldmx.eval.event_diagnostics import select_representative_events
 from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics
-from ml_ldmx.viz.training import plot_event_accuracy_overview, plot_event_diagnostic_correlations
+from ml_ldmx.viz.training import (
+    plot_event_accuracy_overview,
+    plot_event_diagnostic_correlations,
+    plot_shower_separation_profiles,
+)
 
 
 class IdentityLogitModel(nn.Module):
@@ -16,13 +20,13 @@ class IdentityLogitModel(nn.Module):
         return x
 
 
-def _view(logits, target, event_idx, pos=None, energy=None):
+def _view(logits, target, event_idx, pos=None, energy=None, fractions=None, electron_count=None):
     num_hits = len(target)
     if pos is None:
         pos = [[float(idx), float(label), float(idx % 2)] for idx, label in enumerate(target)]
     if energy is None:
         energy = [1.0 for _idx in range(num_hits)]
-    return {
+    view = {
         "x": torch.as_tensor(logits, dtype=torch.float32),
         "ecal_mask": torch.ones((num_hits,), dtype=torch.bool),
         "ecal_pos": torch.as_tensor(pos, dtype=torch.float32),
@@ -32,6 +36,11 @@ def _view(logits, target, event_idx, pos=None, energy=None):
         "source_file": f"event_{event_idx}.root",
         "source_entry": torch.tensor(event_idx),
     }
+    if fractions is not None:
+        view["origin_id_fraction_target"] = torch.as_tensor(fractions, dtype=torch.float32)
+    if electron_count is not None:
+        view["electron_count"] = torch.tensor(electron_count)
+    return view
 
 
 class EventAccuracyDiagnosticsTest(unittest.TestCase):
@@ -110,7 +119,112 @@ class EventAccuracyDiagnosticsTest(unittest.TestCase):
         )
         self.assertEqual(record["ambiguous_hit_fraction_xy"], 0.0)
         self.assertEqual(record["early_layer_count"], 1)
-        self.assertEqual(record["shower_overlap_weighting"], "raw_reconstructed_energy")
+        self.assertEqual(record["shower_overlap_weighting"], "uniform_binary_membership")
+        self.assertEqual(record["contributor_membership_source"], "dominant_origin_fallback")
+
+    def test_any_contributor_membership_is_default_and_dominant_is_retained(self):
+        event = _view(
+            [[5.0, 0.0], [5.0, 0.0], [0.0, 5.0], [0.0, 5.0]],
+            [0, 0, 1, 1],
+            13,
+            pos=[
+                [-1.0, 0.0, 10.0],
+                [1.0, 0.0, 10.0],
+                [9.0, 0.0, 10.0],
+                [11.0, 0.0, 10.0],
+            ],
+            fractions=[
+                [1.0, 0.0],
+                [0.6, 0.4],
+                [0.0, 1.0],
+                [0.0, 1.0],
+            ],
+            electron_count=2,
+        )
+        args = SimpleNamespace(batch_size=1, valid_labels=[0, 1])
+
+        record = collect_event_metrics(
+            IdentityLogitModel(),
+            [event],
+            [0],
+            None,
+            args,
+            torch.device("cpu"),
+        )[0]
+
+        expected_contributor = 7.0 / ((59.0 / 3.0) ** 0.5)
+        expected_dominant = 10.0 / (2.0**0.5)
+        self.assertAlmostEqual(
+            record["contributor_min_normalized_shower_separation_xy"],
+            expected_contributor,
+        )
+        self.assertAlmostEqual(
+            record["dominant_min_normalized_shower_separation_xy"],
+            expected_dominant,
+        )
+        self.assertEqual(
+            record["min_normalized_shower_separation_xy"],
+            record["contributor_min_normalized_shower_separation_xy"],
+        )
+        self.assertEqual(
+            record["early_contributor_min_normalized_shower_separation_xy"],
+            record["contributor_min_normalized_shower_separation_xy"],
+        )
+        self.assertAlmostEqual(
+            record["first_layer_contributor_min_centroid_distance_xy"],
+            7.0,
+        )
+        self.assertAlmostEqual(
+            record["first_layer_dominant_min_centroid_distance_xy"],
+            10.0,
+        )
+        self.assertEqual(record["contributor_num_showers"], 2)
+        self.assertEqual(record["dominant_num_showers"], 2)
+        self.assertEqual(record["shower_separation_default"], "binary_any_contributor")
+        self.assertEqual(record["contributor_membership_source"], "origin_id_fraction_target")
+
+    def test_three_electron_separation_uses_minimum_of_three_pairs(self):
+        event = _view(
+            [[5.0, 0.0, 0.0]] * 2 + [[0.0, 5.0, 0.0]] * 2 + [[0.0, 0.0, 5.0]] * 2,
+            [0, 0, 1, 1, 2, 2],
+            14,
+            pos=[
+                [-1.0, 0.0, 10.0],
+                [1.0, 0.0, 10.0],
+                [4.0, 0.0, 10.0],
+                [6.0, 0.0, 10.0],
+                [19.0, 0.0, 10.0],
+                [21.0, 0.0, 10.0],
+            ],
+            fractions=[
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+            ],
+            electron_count=3,
+        )
+        args = SimpleNamespace(batch_size=1, valid_labels=[0, 1, 2])
+
+        record = collect_event_metrics(
+            IdentityLogitModel(),
+            [event],
+            [0],
+            None,
+            args,
+            torch.device("cpu"),
+        )[0]
+
+        self.assertAlmostEqual(
+            record["contributor_min_normalized_shower_separation_xy"],
+            5.0 / (2.0**0.5),
+        )
+        self.assertAlmostEqual(
+            record["contributor_mean_normalized_shower_separation_xy"],
+            (5.0 + 15.0 + 20.0) / (3.0 * (2.0**0.5)),
+        )
 
     def test_plot_event_accuracy_overview_writes_file(self):
         records = [
@@ -175,6 +289,38 @@ class EventAccuracyDiagnosticsTest(unittest.TestCase):
             output_path = Path(temporary_dir) / "event_diagnostics.png"
             plot_event_diagnostic_correlations(records, output_path, "validation diagnostics")
 
+            self.assertTrue(output_path.exists())
+            self.assertGreater(output_path.stat().st_size, 0)
+
+    def test_plot_shower_separation_profiles_writes_both_accuracy_targets(self):
+        records = []
+        for event_idx in range(16):
+            separation = 0.5 + 0.2 * event_idx
+            records.append(
+                {
+                    "event_idx": event_idx,
+                    "electron_count": 2 if event_idx < 8 else 3,
+                    "accuracy": min(1.0, 0.45 + 0.03 * event_idx),
+                    "energy_weighted_accuracy": min(1.0, 0.5 + 0.03 * event_idx),
+                    "incorrect_hits": max(0, 16 - event_idx),
+                    "contributor_min_normalized_shower_separation_xy": separation,
+                    "early_contributor_min_normalized_shower_separation_xy": separation * 0.8,
+                    "dominant_min_normalized_shower_separation_xy": separation * 1.1,
+                    "early_dominant_min_normalized_shower_separation_xy": separation * 0.9,
+                }
+            )
+
+        with TemporaryDirectory() as temporary_dir:
+            output_path = Path(temporary_dir) / "separation_profiles.png"
+            plotted = plot_shower_separation_profiles(
+                records,
+                output_path,
+                "shower separation",
+                num_bins=3,
+                bootstrap_samples=10,
+            )
+
+            self.assertTrue(plotted)
             self.assertTrue(output_path.exists())
             self.assertGreater(output_path.stat().st_size, 0)
 

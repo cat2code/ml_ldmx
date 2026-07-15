@@ -83,8 +83,17 @@ def plot_paired_accuracy(rows, labels, slugs, output_path, title):
     overlap = np.asarray(
         [
             np.nan
-            if row.get("min_normalized_shower_separation_xy") is None
-            else float(row["min_normalized_shower_separation_xy"])
+            if row.get(
+                "contributor_min_normalized_shower_separation_xy",
+                row.get("min_normalized_shower_separation_xy"),
+            )
+            is None
+            else float(
+                row.get(
+                    "contributor_min_normalized_shower_separation_xy",
+                    row.get("min_normalized_shower_separation_xy"),
+                )
+            )
             for row in selected
         ],
         dtype=float,
@@ -104,7 +113,7 @@ def plot_paired_accuracy(rows, labels, slugs, output_path, title):
             linewidths=0.25,
         )
         colorbar = fig.colorbar(scatter, ax=ax_scatter, pad=0.01)
-        colorbar.set_label("min normalized shower separation XY")
+        colorbar.set_label("any-contributor min normalized separation XY")
     else:
         ax_scatter.scatter(second, first, s=30, alpha=0.75, color=MODEL_COLORS[0])
     ax_scatter.plot([0, 1], [0, 1], color="#111827", linestyle="--", linewidth=1)

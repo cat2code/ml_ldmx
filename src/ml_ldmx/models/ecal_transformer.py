@@ -39,7 +39,11 @@ class _TransformerHitClassifier(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers,
+            enable_nested_tensor=False,
+        )
         self.head = nn.Linear(d_model, out_dim)
 
     def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor | None = None) -> torch.Tensor:
