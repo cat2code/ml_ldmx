@@ -46,6 +46,13 @@ class HitClassifierBatch:
 
 def hit_classifier_batch_kind(model) -> str | None:
     """Return the supported batching representation for a hit-classifier model."""
+    declared_kind = getattr(model, "hit_classifier_batch_kind", None)
+    if declared_kind is not None:
+        if declared_kind not in ("padded", "graph"):
+            raise ValueError(
+                f"Unsupported declared hit-classifier batch kind: {declared_kind!r}."
+            )
+        return declared_kind
     name = model.__class__.__name__
     if "Transformer" in name:
         return "padded"

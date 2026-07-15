@@ -24,6 +24,7 @@ from ml_ldmx.models import (
     ECalGravNet,
     ECalTpadGravNet,
     ECalTpadSlotModel,
+    ECalTpadTrackSeededTransformer,
     ECalTpadTransformer,
     ECalTransformer,
 )
@@ -175,6 +176,7 @@ class ModelFamilySmokeTest(unittest.TestCase):
         builders = [
             ("ECalTransformer", ecal_transformer_view, 4, False),
             ("ECalTpadTransformer", ecal_tpad_transformer_view, 8, True),
+            ("ECalTpadTrackSeededTransformer", ecal_tpad_transformer_view, 8, True),
             ("ECalGravNet", ecal_gravnet_view, 4, False),
             ("ECalTpadGravNet", ecal_tpad_gravnet_view, 8, True),
             ("ECalTpadSlotModel", ecal_tpad_slot_model_view, 8, True),
@@ -217,6 +219,19 @@ class ModelFamilySmokeTest(unittest.TestCase):
             (
                 "ECalTpadTransformer",
                 ECalTpadTransformer(
+                    in_dim=8,
+                    d_model=32,
+                    nhead=4,
+                    num_layers=1,
+                    dim_feedforward=64,
+                    dropout=0.0,
+                    out_dim=len(VALID_LABELS),
+                ),
+                ecal_tpad_transformer_view(event),
+            ),
+            (
+                "ECalTpadTrackSeededTransformer",
+                ECalTpadTrackSeededTransformer(
                     in_dim=8,
                     d_model=32,
                     nhead=4,

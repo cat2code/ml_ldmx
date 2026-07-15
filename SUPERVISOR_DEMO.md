@@ -26,6 +26,8 @@ for this demo. Runtime depends strongly on the machine and PyTorch version.
 
 The generated result index is
 [`outputs/supervisor_demo_transformer_20k/DEMO_INDEX.md`](outputs/supervisor_demo_transformer_20k/DEMO_INDEX.md).
+The controlled follow-up on model ceilings and explicit TPad use is documented
+in [`MODEL_CEILING_STUDY.md`](MODEL_CEILING_STUDY.md).
 
 ## 1. Environment
 
@@ -174,6 +176,8 @@ The bundle contains:
 - Correlations with loss, confidence, entropy, hit count, energy-weighted
   accuracy, centroid separation, normalized shower separation, and geometric
   ambiguity.
+- Assignment-ceiling checks for event-wide label permutations, truth-fraction
+  ambiguity, and available TPad context.
 - Accuracy and energy-weighted accuracy versus shower separation.
 - JSON and CSV records for every inspected event.
 - Three worst, three median, and three best static and interactive 3D event
@@ -279,6 +283,7 @@ At each `inspection/best/<split>/` directory:
 ```text
 <split>_event_accuracy_overview.png
 <split>_event_diagnostic_correlations.png
+<split>_assignment_ceiling_diagnostics.png
 <split>_shower_separation_profiles.png
 <split>_event_accuracy.json
 <split>_event_accuracy.csv
@@ -291,4 +296,3 @@ inspection_manifest.json
 The run-root test confusion matrix is produced after the final training epoch.
 The `inspection/best/` event diagnostics and all headline numbers in this guide
 come from the validation-selected checkpoint.
-

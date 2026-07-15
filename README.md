@@ -34,7 +34,8 @@ origin IDs.
 Maintained training entry points are:
 
 - `scripts/train_hit_classifier_baseline.py`: common canonical-y runner for
-  the four maintained hit-origin classification baselines.
+  the four maintained hit-origin baselines and the experimental track-seeded
+  Transformer.
 - `scripts/train_ecal_tpad_slot_model.py`: balanced `2e`/`3e` training with
   hit-origin, energy-fraction, slot-validity, and event electron-count heads.
 - `scripts/train_ecal_tpad_mlpf_lite_scaled.py`: scalable three-origin
@@ -69,7 +70,7 @@ The fast model-family smoke test first looks for processed events in
 
 ## Maintained Model Validation
 
-Validate that all five maintained models consume the same canonical combined
+Validate that all current model families consume the same canonical combined
 event pipeline and canonical-y target convention:
 
 ```bash
@@ -137,9 +138,10 @@ python scripts/train_hit_classifier_baseline.py `
 ```
 
 Valid `--model` values are `ECalGravNet`, `ECalTpadGravNet`,
-`ECalTransformer`, and `ECalTpadTransformer`. The runner trains only ECal
-hit-origin cross-entropy and writes classification histories, checkpoints,
-test confusion matrices, and representative ECal truth/prediction plots.
+`ECalTransformer`, `ECalTpadTransformer`, and the experimental
+`ECalTpadTrackSeededTransformer`. The runner trains only ECal hit-origin
+cross-entropy and writes classification histories, checkpoints, test confusion
+matrices, and representative ECal truth/prediction plots.
 For the ten-event processed smoke cache, pass:
 
 ```powershell
@@ -160,6 +162,11 @@ PyTorch Geometric `torch-cluster` runtime dependency.
 For the complete local 20,000-event 2e/3e Transformer showcase, including the
 exact training, resume, inspection, and interactive-display commands, see
 [`SUPERVISOR_DEMO.md`](SUPERVISOR_DEMO.md).
+
+For the controlled label-ceiling, truth-ambiguity, TPad-ablation, and
+track-seeded architecture study, including measured conclusions and exact
+reproduction commands, see
+[`MODEL_CEILING_STUDY.md`](MODEL_CEILING_STUDY.md).
 
 Re-run validation diagnostics and create interactive worst/median/best event
 displays from a saved checkpoint without retraining:
@@ -218,6 +225,23 @@ TriggerPadTracks `pe` separately from their optionally log-transformed model
 inputs. This keeps energy-weighted diagnostics physically interpretable and
 leaves the TriggerPad signal available for future diagnostics. Existing caches
 remain supported and use their stored input-energy vector as a fallback.
+
+### Assignment Ceilings and TPad Ablation
+
+Analyze a saved best checkpoint without retraining:
+
+```bash
+python scripts/analyze_hit_classifier_ceiling.py \
+  --run-dir outputs/hit_classifier_baseline/my_run \
+  --checkpoint best.pt \
+  --split val \
+  --device auto
+```
+
+The command writes ordinary versus permutation-invariant accuracy, accuracy
+versus truth deposited-energy fraction margin, TPad completeness summaries,
+and a paired evaluation with every TPad token removed. It preserves the exact
+saved event split and model preprocessing.
 
 ### Pipeline Benchmarking
 

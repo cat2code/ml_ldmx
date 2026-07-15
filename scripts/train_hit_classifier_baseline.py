@@ -41,7 +41,13 @@ from ml_ldmx.datasets.stats import count_classes, target_order_counts
 from ml_ldmx.eval.event_diagnostics import select_representative_events
 from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
-from ml_ldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
+from ml_ldmx.models import (
+    ECalGravNet,
+    ECalTpadGravNet,
+    ECalTpadTrackSeededTransformer,
+    ECalTpadTransformer,
+    ECalTransformer,
+)
 from ml_ldmx.train.checkpoints import load_checkpoint, save_checkpoint
 from ml_ldmx.train.hit_classifier_baseline import compute_event_losses, train_one_epoch
 from ml_ldmx.train.logging import setup_logging
@@ -60,6 +66,7 @@ from ml_ldmx.viz.ecal import (
     plot_ecal_hit_prediction_errors_3d_interactive,
 )
 from ml_ldmx.viz.training import (
+    plot_assignment_ceiling_diagnostics,
     plot_confusion_matrix,
     plot_event_accuracy_overview,
     plot_event_diagnostic_correlations,
@@ -68,7 +75,13 @@ from ml_ldmx.viz.training import (
 )
 
 
-MODEL_NAMES = ("ECalGravNet", "ECalTpadGravNet", "ECalTransformer", "ECalTpadTransformer")
+MODEL_NAMES = (
+    "ECalGravNet",
+    "ECalTpadGravNet",
+    "ECalTransformer",
+    "ECalTpadTransformer",
+    "ECalTpadTrackSeededTransformer",
+)
 VALID_LABELS = (1, 2, 3)
 DEFAULT_PROCESSED_DIR = PROJECT_ROOT / "data/processed/ecal_tpad_hit_classifier_baseline"
 DEFAULT_DATA_ROOT = PROJECT_ROOT / "data/ldmx_overlay_events_700k"
@@ -449,6 +462,8 @@ def model_and_view(args, input_dim):
     }
     if args.model == "ECalTransformer":
         return ECalTransformer(**transformer_kwargs), ecal_transformer_view
+    if args.model == "ECalTpadTrackSeededTransformer":
+        return ECalTpadTrackSeededTransformer(**transformer_kwargs), ecal_tpad_transformer_view
     return ECalTpadTransformer(**transformer_kwargs), ecal_tpad_transformer_view
 
 
@@ -826,6 +841,7 @@ def main():
         "ECalTpadGravNet": ecal_tpad_gravnet_view,
         "ECalTransformer": ecal_transformer_view,
         "ECalTpadTransformer": ecal_tpad_transformer_view,
+        "ECalTpadTrackSeededTransformer": ecal_tpad_transformer_view,
     }[args.model](events[0])
     input_dim = int(prototype_view["x"].shape[1])
     model, view_fn = model_and_view(args, input_dim)
@@ -996,6 +1012,12 @@ def main():
         val_diagnostic_plot_path,
         f"{args.model} validation event diagnostics",
     )
+    val_ceiling_plot_path = run_dir / "val_assignment_ceiling_diagnostics.png"
+    plot_assignment_ceiling_diagnostics(
+        val_event_records,
+        val_ceiling_plot_path,
+        f"{args.model} validation assignment-ceiling diagnostics",
+    )
     val_separation_plot_path = run_dir / "val_shower_separation_profiles.png"
     plot_shower_separation_profiles(
         val_event_records,
@@ -1026,6 +1048,10 @@ def main():
         logger.info(
             "Skipped validation diagnostic-correlation plot; need at least two finite events per panel."
         )
+    if val_ceiling_plot_path.exists():
+        validation_plot_paths.append(val_ceiling_plot_path)
+    else:
+        logger.info("Skipped validation assignment-ceiling plot; required diagnostics are unavailable.")
     if val_separation_plot_path.exists():
         validation_plot_paths.append(val_separation_plot_path)
     else:
