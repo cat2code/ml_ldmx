@@ -36,9 +36,13 @@ squeue -u "$USER"
 tail -F outputs/slurm/ml_ldmx_tensorize_JOB_ID.out
 ```
 
-The dispatcher runs the test suite and a real-ROOT smoke test, submits the
-worker array, then submits a dependent finalizer. The finalizer requires exactly
-10,000,000 events for each class (20,000,000 total) and writes:
+The dispatcher runs the test suite and a real-ROOT smoke test, reads Slurm's
+`MaxArraySize`, and splits large plans into sequential worker-array chunks when
+needed. Local array indices are translated back to global plan indices, so plans
+with more ROOT files than Slurm permits in one array are supported while
+`MAX_PARALLEL_JOBS` remains the overall concurrency limit. A dependent finalizer
+runs after the last chunk. It requires exactly 10,000,000 events for each class
+(20,000,000 total) and writes:
 
 ```text
 data/processed/production_10M_001_sharded/2e/events/{manifest.json,index.json,shards/*.pt}
