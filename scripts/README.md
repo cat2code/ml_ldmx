@@ -51,6 +51,278 @@ Both model inputs use `log1p`; every event also retains `ecal_raw_energy` and
 Set `EXPECTED_EVENTS_2E=0,EXPECTED_EVENTS_3E=0` only when intentionally building
 a dataset whose size is not 5M per class.
 
+## Train a maintained baseline on Cosmos
+
+Tensorization produces ML-ready event shards; it does not train a model. The
+baseline launcher reads those shards lazily and trains one of four maintained
+ECal hit-origin classifiers with the same canonical-y targets and deterministic
+data split:
+
+- `ECalTransformer`: ECal hits only.
+- `ECalTpadTransformer`: ECal hits with TPad context.
+- `ECalGravNet`: ECal hits only, using GravNet layers.
+- `ECalTpadGravNet`: ECal hits with TPad context and GravNet layers.
+
+The normal comparison dataset contains balanced `2e` and `3e` sources. Noise
+hits are filtered, continuous features are normalized using the training split
+only, and the events are split deterministically into 80% train, 15%
+validation, and 5% test using `SEED`.
+
+### Check the training inputs and environment
+
+Submit from the `ml_ldmx/` directory. The baseline batch script expects the
+same environment prepared for tensorization and a completed cache with both
+source directories:
+
+```text
+/cluster/data/production_5M_001_shards/
+  preprocessing_summary.json
+  2e/events/
+    manifest.json
+    index.json
+    shards/*.pt
+  3e/events/
+    manifest.json
+    index.json
+    shards/*.pt
+```
+
+Do not train from an unfinished cache. The manifests must describe the same
+input transforms requested by the training job. The tensorization command
+above writes `log1p` ECal energy and TPad PE inputs, which match the batch
+script defaults.
+
+Prepare the environment and Slurm log directory once:
+
+```bash
+cd /cluster/path/to/ml_ldmx
+module load GCCcore/13.2.0 Python/3.11.5
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip install -e .
+mkdir -p outputs/slurm
+```
+
+`outputs/slurm` must exist before `sbatch`, because Slurm opens the log files
+before the job body starts. The job itself reloads the Cosmos modules,
+activates `${VENV_DIR:-<repo>/.venv}`, refreshes the editable install, prints a
+CUDA report, and logs the exact Python training command.
+
+### Start with a balanced smoke run
+
+Use a small run to validate the full cache, GPU environment, loss calculation,
+checkpointing, and plots before requesting a long job:
+
+```bash
+unset SOURCE_LABEL ELECTRON_COUNT RESUME
+sbatch \
+  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_1k_seed7 \
+  scripts/sbatch/cosmos_train_baseline.sbatch
+```
+
+With both sources selected, `EVENTS_PER_SOURCE=500` means 500 `2e` events plus
+500 `3e` events, or 1,000 total. The deterministic split is therefore 800
+training, 150 validation, and 50 test events. Leaving `SOURCE_LABEL` unset is
+the recommended mode for maintained model comparisons. Because `--export=ALL`
+forwards the submission shell, clear stale single-source or resume variables as
+shown before every new balanced run.
+
+The batch script defaults to `ECalTpadTransformer`, five epochs, batch size 8,
+learning rate `1e-3`, no weight decay, and seed 7. The explicit values in the
+example make the configuration traceable and the data split/training order
+repeatable; GPU kernels are not guaranteed to be bitwise deterministic. The
+directory name is also self-describing. Never reuse a `RUN_NAME` for an
+unrelated experiment; files in an existing run directory can be replaced or
+mixed. Reusing it is appropriate only when resuming that exact run.
+
+Monitor the job with:
+
+```bash
+squeue -u "$USER"
+tail -F outputs/slurm/ml_ldmx_baseline_JOB_ID.out
+sacct -j JOB_ID --format=JobID,JobName,State,Elapsed,ExitCode,MaxRSS
+```
+
+Before scaling, confirm in the Slurm log and run artifacts that:
+
+- CUDA is available and the resolved training device is `cuda`.
+- The resolved data directory is the intended production cache.
+- The loaded event count and 80/15/5 split sizes are correct.
+- Both input transforms are `log1p` for the cache produced above.
+- Training and validation loss are finite, training loss decreases, and the
+  predictions do not collapse to one class.
+- `checkpoints/best.pt` and `checkpoints/latest.pt` were written.
+
+There is no universal accuracy threshold for a successful smoke run. Its
+purpose is to expose pipeline, memory, and learning failures cheaply.
+
+### Scale in stages
+
+`EVENTS_PER_SOURCE` is a per-source limit, not a total-event limit. For the
+standard balanced cache:
+
+| Purpose | `EVENTS_PER_SOURCE` | Total events | Starting epoch budget |
+| --- | ---: | ---: | ---: |
+| Pipeline smoke | 500 | 1,000 | 3–5 |
+| Learning pilot | 5,000 | 10,000 | 5–10 |
+| Model comparison | 50,000 | 100,000 | 10–20 |
+| Serious candidate | 500,000 | 1,000,000 | chosen from pilot curves |
+| Half-cache final | 2,500,000 | 5,000,000 | chosen from scaling results |
+| Complete cache | 5,000,000 | 10,000,000 | chosen from scaling results |
+
+The epoch ranges are starting points rather than fixed recommendations. Use
+the loss curves and elapsed time from the preceding stage to choose the next
+budget. Keep the dataset, event count, seed, batch size, optimizer settings,
+and epoch budget fixed when comparing model families; change only `MODEL` and
+use a distinct `RUN_NAME`.
+
+For example, after the 1,000- and 10,000-event stages are healthy, submit a
+100,000-event candidate run:
+
+```bash
+unset SOURCE_LABEL ELECTRON_COUNT RESUME
+sbatch --time=24:00:00 --mem=64G \
+  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=50000,EPOCHS=15,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_100k_seed7 \
+  scripts/sbatch/cosmos_train_baseline.sbatch
+```
+
+Slurm resource overrides such as `--time` and `--mem` must appear before the
+sbatch filename. Full-scale training and the final event-level diagnostic pass
+can exceed the script's default 12-hour request, so size those resources from
+measured pilot jobs rather than assuming the example is sufficient.
+
+### Available batch settings
+
+Override batch settings through `sbatch --export=ALL,NAME=value,...`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `REPO_ROOT` | Slurm submission directory | `ml_ldmx` repository directory |
+| `VENV_DIR` | `<repo>/.venv` | Prepared Python virtual environment |
+| `PROCESSED_CACHE_ROOT` | `data/processed/production_5M_001_sharded` | Root containing `2e/events` and `3e/events` |
+| `MODEL` | `ECalTpadTransformer` | One of the four maintained baseline names |
+| `EVENTS_PER_SOURCE` | `500` | Events selected from each active source |
+| `SOURCE_LABEL` | empty | Balanced sources; set to `2e` or `3e` for one source |
+| `ELECTRON_COUNT` | inferred | Electron count for a selected single source |
+| `EPOCHS` | `5` | Total target epoch count |
+| `BATCH_SIZE` | `8` | Events per optimizer step |
+| `LR` | `1e-3` | AdamW learning rate |
+| `WEIGHT_DECAY` | `0.0` | AdamW weight decay |
+| `HIDDEN_DIM` | `64` | Hidden/model dimension |
+| `NUM_LAYERS` | `2` | Transformer or GravNet layer count |
+| `NUM_HEADS` | `4` | Transformer attention heads |
+| `DIM_FEEDFORWARD` | `128` | Transformer feed-forward dimension |
+| `DROPOUT` | `0.1` | Dropout probability |
+| `SEED` | `7` | Data split and training-order seed |
+| `ECAL_ENERGY_TRANSFORM` | `log1p` | Expected ECal transform recorded by the cache |
+| `TPAD_PE_TRANSFORM` | `log1p` | Expected TPad transform recorded by the cache |
+| `OUTPUT_ROOT` | `outputs/cosmos_baselines` | Parent directory for run artifacts |
+| `RUN_NAME` | generated | Run directory name |
+| `RESUME` | empty | Compatible `latest.pt` checkpoint to resume |
+
+For Transformer models, `HIDDEN_DIM` must be divisible by `NUM_HEADS`. GravNet
+models require the compiled PyTorch Geometric `torch-cluster` dependency;
+`NUM_HEADS` and `DIM_FEEDFORWARD` do not affect them. Start with the defaults
+and change one optimization or architecture choice at a time.
+
+For a targeted single-source `3e` study:
+
+```bash
+sbatch \
+  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,SEED=7,RUN_NAME=tpad_gravnet_3e_100k_seed7 \
+  scripts/sbatch/cosmos_train_baseline.sbatch
+```
+
+In single-source mode, `EVENTS_PER_SOURCE` is also the total event count and
+the launcher reads only `<cache-root>/<SOURCE_LABEL>/events`. Balanced and
+single-source results answer different questions and should not be placed in
+the same model-comparison table. The wrapper uses the trainer's default valid
+labels `1 2 3`; therefore a `2e`-only batch job still has a three-class output.
+Use the Python training CLI directly with `--valid-labels 1 2` when a true
+two-class `2e` experiment is intended.
+
+### Training outputs and checkpoint choice
+
+The smoke command above writes Slurm logs to:
+
+```text
+outputs/slurm/ml_ldmx_baseline_JOB_ID.out
+outputs/slurm/ml_ldmx_baseline_JOB_ID.err
+```
+
+Training artifacts are written under
+`<OUTPUT_ROOT>/<RUN_NAME>/`:
+
+```text
+config.json
+run_overview.json
+run_overview.md
+model_architecture.txt
+train.log
+history.json
+history.csv
+loss_history.png
+accuracy_history.png
+checkpoints/
+  best.pt
+  latest.pt
+  epoch_XXXX.pt
+final_metrics.json
+test_hit_origin_confusion_matrix.png
+test_ecal_event_*_prediction_errors.png
+val_event_accuracy.json
+val_event_accuracy.csv
+val_event_accuracy_overview.png
+val_event_diagnostic_correlations.png
+val_assignment_ceiling_diagnostics.png
+val_shower_separation_profiles.png
+val_representative_events.json
+val_representative_events/*.{png,html}
+```
+
+Some diagnostic plots require enough finite events and the interactive HTML
+requires Plotly, so small smoke runs may omit those files.
+
+`run_overview.md` is the quickest human-readable reproducibility audit: it
+records the model architecture, parameter count, resolved device, optimizer,
+split sizes, class counts, preprocessing, and all training arguments.
+`run_overview.json` contains the structured record, including the source-file
+list.
+
+`latest.pt` is the final completed epoch and is the checkpoint used to resume.
+`best.pt` is selected by minimum validation loss and is the checkpoint to use
+for model reporting and the analysis tutorial below. The trainer's top-level
+validation diagnostics and `final_metrics.json` are calculated from the final
+in-memory model, which may not be `best.pt`; regenerate validation and test
+diagnostics from `best.pt` with `inspect_hit_classifier_run.py` before quoting
+final results. Do not choose hyperparameters using the test split.
+
+The trainer runs the complete `EPOCHS` budget; it does not stop early when
+validation loss stops improving. The batch wrapper also leaves the trainer's
+default per-epoch checkpointing enabled, so include periodic checkpoints in
+the output-storage estimate for a long run.
+
+### Resume an interrupted run
+
+Resume from `latest.pt` with the same cache, source selection, event count,
+model architecture, seed, transforms, optimizer settings, and `RUN_NAME`.
+`EPOCHS` is the total target epoch count, not the number of additional epochs.
+For example, to extend a ten-epoch run to twenty total epochs:
+
+```bash
+unset SOURCE_LABEL ELECTRON_COUNT
+sbatch --time=24:00:00 --mem=64G \
+  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=5000,EPOCHS=20,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_10k_seed7,RESUME=outputs/cosmos_baselines/tpad_transformer_balanced_10k_seed7/checkpoints/latest.pt \
+  scripts/sbatch/cosmos_train_baseline.sbatch
+```
+
+Using the same run directory preserves the earlier `best.pt` if later epochs
+do not improve validation loss. A new `RUN_NAME` is a new artifact bundle and
+may have no `best.pt` unless the resumed model improves on the saved best loss.
+
+Once training completes, continue with the best-checkpoint inspection,
+ceiling, and comparison workflow below.
+
 ## Analyze saved hit-classifier runs
 
 The three analysis entry points operate on runs produced by

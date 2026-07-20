@@ -71,7 +71,7 @@ if [[ -n "${SOURCE_LABEL}" ]]; then
 fi
 python --version
 nvidia-smi
-python -u scripts/check_cuda_environment.py
+python -u tests/check_cuda_environment.py
 
 cmd=(
   python -u scripts/train_hit_classifier_baseline.py
