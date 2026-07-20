@@ -9,8 +9,8 @@
 set -euo pipefail
 
 # Submit once per independent physical dataset:
-# sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
-# sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+# sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_2e_sharded scripts/sbatch/preprocess_ecal_tpad_sharded.sbatch
+# sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/sbatch/preprocess_ecal_tpad_sharded.sbatch
 
 : "${SOURCE_LABEL:?Set SOURCE_LABEL, for example 2e or 3e}"
 : "${ELECTRON_COUNT:?Set ELECTRON_COUNT, for example 2 or 3}"

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
-PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_5M_001_sharded}"
+PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_10M_001_sharded}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/cosmos_slot}"
 EVENTS_PER_SOURCE="${EVENTS_PER_SOURCE:-500}"  # total events = 2 * this for 2e+3e
 EPOCHS="${EPOCHS:-5}"
@@ -48,7 +48,7 @@ echo "ECal energy transform: ${ECAL_ENERGY_TRANSFORM}"
 echo "TPAD PE transform: ${TPAD_PE_TRANSFORM}"
 python --version
 nvidia-smi
-python -u scripts/check_cuda_environment.py
+python -u tests/check_cuda_environment.py
 
 cmd=(
   python -u scripts/train_ecal_tpad_slot_model.py

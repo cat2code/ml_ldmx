@@ -7,7 +7,7 @@ checks, and cluster launch jobs.
 Scripts should call reusable functionality from `ml_ldmx/src/ml_ldmx`; they
 should not become the place where maintained features are implemented.
 
-## Tensorize the 5M 2e and 3e ROOT datasets on Slurm
+## Tensorize the 10M 2e and 10M 3e ROOT datasets on Slurm
 
 The input directories are supplied at submission time. Each ROOT file becomes
 one `.pt` shard, and at most `MAX_PARALLEL_JOBS` files run concurrently.
@@ -22,7 +22,7 @@ pip install -e .
 mkdir -p outputs/slurm
 
 sbatch \
-  --export=ALL,DATASET_DIR=/cluster/data/production_5M_001,OUTPUT_ROOT=/cluster/data/production_5M_001_shards,MAX_PARALLEL_JOBS=100 \
+  --export=ALL,DATASET_DIR=/cluster/data/production_5M_001,OUTPUT_ROOT=data/processed/production_10M_001_sharded,MAX_PARALLEL_JOBS=100 \
   scripts/sbatch/preprocess_production_5M_001_sharded.sbatch
 ```
 
@@ -38,18 +38,18 @@ tail -F outputs/slurm/ml_ldmx_tensorize_JOB_ID.out
 
 The dispatcher runs the test suite and a real-ROOT smoke test, submits the
 worker array, then submits a dependent finalizer. The finalizer requires exactly
-5,000,000 events for each class and writes:
+10,000,000 events for each class (20,000,000 total) and writes:
 
 ```text
-/cluster/data/production_5M_001_shards/2e/events/{manifest.json,index.json,shards/*.pt}
-/cluster/data/production_5M_001_shards/3e/events/{manifest.json,index.json,shards/*.pt}
-/cluster/data/production_5M_001_shards/preprocessing_summary.json
+data/processed/production_10M_001_sharded/2e/events/{manifest.json,index.json,shards/*.pt}
+data/processed/production_10M_001_sharded/3e/events/{manifest.json,index.json,shards/*.pt}
+data/processed/production_10M_001_sharded/preprocessing_summary.json
 ```
 
 Both model inputs use `log1p`; every event also retains `ecal_raw_energy` and
 `tpad_raw_pe`. Re-submit the same command to reuse completed, matching shards.
 Set `EXPECTED_EVENTS_2E=0,EXPECTED_EVENTS_3E=0` only when intentionally building
-a dataset whose size is not 5M per class.
+a dataset whose size is not 10M per class.
 
 ## Train a maintained baseline on Cosmos
 
@@ -75,7 +75,7 @@ same environment prepared for tensorization and a completed cache with both
 source directories:
 
 ```text
-/cluster/data/production_5M_001_shards/
+data/processed/production_10M_001_sharded/
   preprocessing_summary.json
   2e/events/
     manifest.json
@@ -116,7 +116,7 @@ checkpointing, and plots before requesting a long job:
 ```bash
 unset SOURCE_LABEL ELECTRON_COUNT RESUME
 sbatch \
-  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_1k_seed7 \
+  --export=ALL,PROCESSED_CACHE_ROOT=data/processed/production_10M_001_sharded,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_1k_seed7 \
   scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
@@ -167,8 +167,9 @@ standard balanced cache:
 | Learning pilot | 5,000 | 10,000 | 5–10 |
 | Model comparison | 50,000 | 100,000 | 10–20 |
 | Serious candidate | 500,000 | 1,000,000 | chosen from pilot curves |
-| Half-cache final | 2,500,000 | 5,000,000 | chosen from scaling results |
-| Complete cache | 5,000,000 | 10,000,000 | chosen from scaling results |
+| Quarter-cache candidate | 2,500,000 | 5,000,000 | chosen from scaling results |
+| Half-cache final | 5,000,000 | 10,000,000 | chosen from scaling results |
+| Complete cache | 10,000,000 | 20,000,000 | chosen from scaling results |
 
 The epoch ranges are starting points rather than fixed recommendations. Use
 the loss curves and elapsed time from the preceding stage to choose the next
@@ -182,7 +183,7 @@ For example, after the 1,000- and 10,000-event stages are healthy, submit a
 ```bash
 unset SOURCE_LABEL ELECTRON_COUNT RESUME
 sbatch --time=24:00:00 --mem=64G \
-  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=50000,EPOCHS=15,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_100k_seed7 \
+  --export=ALL,PROCESSED_CACHE_ROOT=data/processed/production_10M_001_sharded,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=50000,EPOCHS=15,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_100k_seed7 \
   scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
@@ -199,7 +200,7 @@ Override batch settings through `sbatch --export=ALL,NAME=value,...`:
 | --- | --- | --- |
 | `REPO_ROOT` | Slurm submission directory | `ml_ldmx` repository directory |
 | `VENV_DIR` | `<repo>/.venv` | Prepared Python virtual environment |
-| `PROCESSED_CACHE_ROOT` | `data/processed/production_5M_001_sharded` | Root containing `2e/events` and `3e/events` |
+| `PROCESSED_CACHE_ROOT` | `data/processed/production_10M_001_sharded` | Root containing `2e/events` and `3e/events` |
 | `MODEL` | `ECalTpadTransformer` | One of the four maintained baseline names |
 | `EVENTS_PER_SOURCE` | `500` | Events selected from each active source |
 | `SOURCE_LABEL` | empty | Balanced sources; set to `2e` or `3e` for one source |
@@ -229,7 +230,7 @@ For a targeted single-source `3e` study:
 
 ```bash
 sbatch \
-  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,SEED=7,RUN_NAME=tpad_gravnet_3e_100k_seed7 \
+  --export=ALL,PROCESSED_CACHE_ROOT=data/processed/production_10M_001_sharded,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,SEED=7,RUN_NAME=tpad_gravnet_3e_100k_seed7 \
   scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
@@ -312,7 +313,7 @@ For example, to extend a ten-epoch run to twenty total epochs:
 ```bash
 unset SOURCE_LABEL ELECTRON_COUNT
 sbatch --time=24:00:00 --mem=64G \
-  --export=ALL,PROCESSED_CACHE_ROOT=/cluster/data/production_5M_001_shards,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=5000,EPOCHS=20,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_10k_seed7,RESUME=outputs/cosmos_baselines/tpad_transformer_balanced_10k_seed7/checkpoints/latest.pt \
+  --export=ALL,PROCESSED_CACHE_ROOT=data/processed/production_10M_001_sharded,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=5000,EPOCHS=20,BATCH_SIZE=8,SEED=7,OUTPUT_ROOT=outputs/cosmos_baselines,RUN_NAME=tpad_transformer_balanced_10k_seed7,RESUME=outputs/cosmos_baselines/tpad_transformer_balanced_10k_seed7/checkpoints/latest.pt \
   scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
@@ -384,10 +385,10 @@ If the data moved, use one—and only one—of these relocation forms:
 
 ```bash
 # A balanced cache with both sources:
---processed-cache-root /cluster/data/production_5M_001_shards
+--processed-cache-root data/processed/production_10M_001_sharded
 
 # A single-source run; repeat --processed-source only if the run used more sources:
---processed-source 2 2e /cluster/data/production_5M_001_shards/2e/events
+--processed-source 2 2e data/processed/production_10M_001_sharded/2e/events
 ```
 
 The relocated cache must contain the same events in the same source order and
@@ -404,7 +405,7 @@ checkpoint:
 
 ```bash
 RUN_DIR=outputs/cosmos_baselines/my_run
-CACHE_ROOT=/cluster/data/production_5M_001_shards
+CACHE_ROOT=data/processed/production_10M_001_sharded
 
 python -u scripts/inspect_hit_classifier_run.py \
   --run-dir "$RUN_DIR" \
@@ -604,7 +605,7 @@ sbatch scripts/sbatch/cosmos_hit_classifier_analysis.sbatch inspect \
   --run-dir outputs/cosmos_baselines/my_run \
   --checkpoint best.pt \
   --split val \
-  --processed-cache-root /cluster/data/production_5M_001_shards \
+  --processed-cache-root data/processed/production_10M_001_sharded \
   --num-events 9 \
   --batch-size 32 \
   --device cuda
@@ -617,7 +618,7 @@ sbatch scripts/sbatch/cosmos_hit_classifier_analysis.sbatch ceiling \
   --run-dir outputs/cosmos_baselines/my_tpad_run \
   --checkpoint best.pt \
   --split val \
-  --processed-cache-root /cluster/data/production_5M_001_shards \
+  --processed-cache-root data/processed/production_10M_001_sharded \
   --batch-size 32 \
   --device cuda
 ```

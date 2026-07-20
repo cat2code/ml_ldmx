@@ -80,7 +80,7 @@ To validate against a sharded production-style cache, point the test at the
 cache root and choose the device explicitly:
 
 ```bash
-ML_LDMX_PROCESSED_CACHE_ROOT=data/processed/production_5M_001_sharded \
+ML_LDMX_PROCESSED_CACHE_ROOT=data/processed/production_10M_001_sharded \
 ML_LDMX_EVENTS_PER_SOURCE=10 \
 ML_LDMX_ECAL_ENERGY_TRANSFORM=log1p \
 ML_LDMX_TPAD_PE_TRANSFORM=log1p \
@@ -368,7 +368,7 @@ separate `2e/events` and `3e/events` caches:
 ```powershell
 python scripts/train_hit_classifier_baseline.py `
   --model ECalTpadTransformer `
-  --processed-cache-root data/processed/production_5M_001_sharded `
+  --processed-cache-root data/processed/production_10M_001_sharded `
   --ecal-energy-transform log1p `
   --tpad-pe-transform log1p `
   --events-per-source 500 `
@@ -389,8 +389,8 @@ On a SLURM cluster, submit the generic preprocessing job once per independent
 source dataset:
 
 ```bash
-sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_2e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
-sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/slurm/preprocess_ecal_tpad_sharded.sbatch
+sbatch --export=ALL,SOURCE_LABEL=2e,ELECTRON_COUNT=2,ROOT_DIR=/path/to/2e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_2e_sharded scripts/sbatch/preprocess_ecal_tpad_sharded.sbatch
+sbatch --export=ALL,SOURCE_LABEL=3e,ELECTRON_COUNT=3,ROOT_DIR=/path/to/3e/events,OUTPUT_DIR=/scratch/$USER/ml_ldmx/ecal_tpad_3e_sharded scripts/sbatch/preprocess_ecal_tpad_sharded.sbatch
 ```
 
 Quick ROOT-backed sharded smoke validation uses temporary shards and leaves no cache behind:
@@ -416,8 +416,8 @@ git pull
 source .venv/bin/activate
 python -m pip install -e .
 mkdir -p outputs/slurm
-sbatch other/cosmos_validate_gpu.sbatch
-sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,RUN_NAME=tpad_transformer_1k other/cosmos_train_baseline.sbatch
+sbatch tests/cosmos_validate_gpu.sbatch
+sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,RUN_NAME=tpad_transformer_1k scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
 For the production cache layout, `--events-per-source 500` means 1,000 total
@@ -426,7 +426,7 @@ events across the separate `2e` and `3e` processed shard sources. Set
 that mode `EVENTS_PER_SOURCE` is the total number of events used. For example:
 
 ```bash
-sbatch --export=ALL,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,RUN_NAME=tpad_gravnet_3e_100k other/cosmos_train_baseline.sbatch
+sbatch --export=ALL,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,RUN_NAME=tpad_gravnet_3e_100k scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
 For a minimal ROOT-to-tensor inspection path, run the sharded preprocessor on one small source sample:

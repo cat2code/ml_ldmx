@@ -14,12 +14,12 @@ set -euo pipefail
 # Submit on Cosmos:
 #   cd /path/to/work/ml_ldmx
 #   mkdir -p outputs/slurm
-#   sbatch scripts/slurm/smoke_production_5M_001_sharded.sbatch
+#   sbatch tests/smoke_production_5M_001_sharded.sbatch
 
 REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
 WORK_DIR="${WORK_DIR:-$(dirname "${REPO_DIR}")}"
 DATASET_DIR="${DATASET_DIR:-${WORK_DIR}/production_5M_001}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_5M_001_sharded_smoke}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-${REPO_DIR}/data/processed/production_10M_001_sharded_smoke}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 READ_STEP_SIZE="${READ_STEP_SIZE:-100}"
 MAX_ROOT_FILES="${MAX_ROOT_FILES:-1}"

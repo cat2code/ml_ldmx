@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
-PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_5M_001_sharded}"
+PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_10M_001_sharded}"
 EVENTS_PER_SOURCE="${EVENTS_PER_SOURCE:-10}"
 
 module --force purge
@@ -36,7 +36,7 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 python --version
 nvidia-smi
 
-python -u scripts/check_cuda_environment.py
+python -u tests/check_cuda_environment.py
 
 ML_LDMX_PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT}" \
 ML_LDMX_EVENTS_PER_SOURCE="${EVENTS_PER_SOURCE}" \

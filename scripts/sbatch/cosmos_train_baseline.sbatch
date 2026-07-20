@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
-PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_5M_001_sharded}"
+PROCESSED_CACHE_ROOT="${PROCESSED_CACHE_ROOT:-data/processed/production_10M_001_sharded}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/cosmos_baselines}"
 MODEL="${MODEL:-ECalTpadTransformer}"
 SOURCE_LABEL="${SOURCE_LABEL:-}"              # leave empty for balanced 2e+3e; set to 2e or 3e for one source

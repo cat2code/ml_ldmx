@@ -3,7 +3,7 @@
 This guide is for running the maintained ml_ldmx workflow on Cosmos with
 already tensorized ML-ready shards. The normal training path should not read
 ROOT files: it should load processed shards from
-`data/processed/production_5M_001_sharded`.
+`data/processed/production_10M_001_sharded`.
 
 ## Setup
 
@@ -25,7 +25,7 @@ The Slurm scripts load the same modules as the working CUDA test:
 Expected production shard layout:
 
 ```text
-data/processed/production_5M_001_sharded/
+data/processed/production_10M_001_sharded/
   2e/events/
     manifest.json
     index.json
@@ -41,13 +41,13 @@ data/processed/production_5M_001_sharded/
 Interactive/login-node-safe check:
 
 ```bash
-python scripts/check_cuda_environment.py
+python tests/check_cuda_environment.py
 ```
 
 GPU batch validation:
 
 ```bash
-sbatch other/cosmos_validate_gpu.sbatch
+sbatch tests/cosmos_validate_gpu.sbatch
 ```
 
 This runs the CUDA check and the five-model common-pipeline validation on GPU.
@@ -77,6 +77,8 @@ total events     --events-per-source
 100,000          50,000
 1,000,000        500,000
 5,000,000        2,500,000
+10,000,000       5,000,000
+20,000,000       10,000,000
 ```
 
 `--max-events` is a total cap, but it truncates the combined source order.
@@ -88,28 +90,28 @@ Run a 1,000-event baseline job:
 
 ```bash
 sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=500,EPOCHS=5,RUN_NAME=tpad_transformer_1k \
-  other/cosmos_train_baseline.sbatch
+  scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
 Run a 10,000-event baseline job:
 
 ```bash
 sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=5000,EPOCHS=10,RUN_NAME=tpad_transformer_10k \
-  other/cosmos_train_baseline.sbatch
+  scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
 Run a 100,000-event TPAD GravNet job on only `3e` events:
 
 ```bash
 sbatch --export=ALL,MODEL=ECalTpadGravNet,SOURCE_LABEL=3e,EVENTS_PER_SOURCE=100000,EPOCHS=10,RUN_NAME=tpad_gravnet_3e_100k \
-  other/cosmos_train_baseline.sbatch
+  scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
 Run a 1,000-event advanced slot-model job:
 
 ```bash
 sbatch --export=ALL,EVENTS_PER_SOURCE=500,EPOCHS=5,RUN_NAME=slot_1k \
-  other/cosmos_train_slot.sbatch
+  scripts/sbatch/cosmos_train_slot.sbatch
 ```
 
 Run the slot model with explicit noise/background supervision, only when the
@@ -117,7 +119,7 @@ processed shards contain `is_noise_target`:
 
 ```bash
 sbatch --export=ALL,EVENTS_PER_SOURCE=500,EPOCHS=5,SUPERVISE_NOISE=1,RUN_NAME=slot_noise_1k \
-  other/cosmos_train_slot.sbatch
+  scripts/sbatch/cosmos_train_slot.sbatch
 ```
 
 ## Hyperparameters
@@ -183,10 +185,10 @@ Resume from the last checkpoint:
 
 ```bash
 sbatch --export=ALL,MODEL=ECalTpadTransformer,EVENTS_PER_SOURCE=5000,RUN_NAME=tpad_transformer_10k_resume,RESUME=outputs/cosmos_baselines/tpad_transformer_10k/checkpoints/latest.pt \
-  other/cosmos_train_baseline.sbatch
+  scripts/sbatch/cosmos_train_baseline.sbatch
 ```
 
-For the slot model, use `other/cosmos_train_slot.sbatch` and a checkpoint from
+For the slot model, use `scripts/sbatch/cosmos_train_slot.sbatch` and a checkpoint from
 `outputs/cosmos_slot/<run-name>/checkpoints/latest.pt`.
 
 ## Recommended Scaling Plan
@@ -203,7 +205,7 @@ Stage 4: 100,000-event hyperparameter comparison.
 
 Stage 5: 1,000,000-event serious candidate training.
 
-Stage 6: up to 5,000,000-event final-scale training.
+Stage 6: up to the complete 20,000,000-event cache for final-scale training.
 
 At every stage, inspect loss curves, validation metrics, confusion matrices,
 and prediction plots before scaling. Do not spend A100 time on bigger runs
