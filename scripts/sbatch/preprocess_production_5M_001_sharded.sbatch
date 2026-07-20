@@ -135,7 +135,7 @@ dispatch() {
       --time="${WORKER_TIME}" \
       --output="${REPO_DIR}/outputs/slurm/%x_%A_%a.out" \
       --error="${REPO_DIR}/outputs/slurm/%x_%A_%a.err" \
-      "${REPO_DIR}/scripts/preprocess_production_5M_001_sharded.sbatch"
+      "${REPO_DIR}/scripts/sbatch/preprocess_production_5M_001_sharded.sbatch"
   )
   worker_job_id="${worker_submission%%;*}"
 
@@ -149,7 +149,7 @@ dispatch() {
       --time="${FINALIZER_TIME}" \
       --output="${REPO_DIR}/outputs/slurm/%x_%j.out" \
       --error="${REPO_DIR}/outputs/slurm/%x_%j.err" \
-      "${REPO_DIR}/scripts/preprocess_production_5M_001_sharded.sbatch"
+      "${REPO_DIR}/scripts/sbatch/preprocess_production_5M_001_sharded.sbatch"
   )
   finalizer_job_id="${finalizer_submission%%;*}"
 
