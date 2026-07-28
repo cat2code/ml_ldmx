@@ -52,6 +52,23 @@ GEOMETRY_FIELDS = (
     "energy_weighted_ambiguous_hit_fraction_xy",
     "mean_hit_centroid_margin_xy",
 )
+MATCH_INVARIANT_GEOMETRY_FIELDS = tuple(
+    field
+    for field in GEOMETRY_FIELDS
+    if field
+    not in {
+        # These diagnostics are derived from the selected hard target. They
+        # may legitimately change when comparing target-construction rules.
+        "num_truth_classes",
+        "dominant_min_centroid_distance_xy",
+        "dominant_min_normalized_shower_separation_xy",
+        "early_dominant_min_normalized_shower_separation_xy",
+        "first_layer_dominant_min_centroid_distance_xy",
+        "ambiguous_hit_fraction_xy",
+        "energy_weighted_ambiguous_hit_fraction_xy",
+        "mean_hit_centroid_margin_xy",
+    }
+)
 
 
 def label_slug(label):
@@ -154,7 +171,7 @@ def _validate_matched_geometry(key, first_record, second_record):
         raise ValueError(
             f"Matched event {key!r} has different hit counts: {first_hits} versus {second_hits}."
         )
-    for field in GEOMETRY_FIELDS:
+    for field in MATCH_INVARIANT_GEOMETRY_FIELDS:
         first_value = _finite_number(first_record.get(field))
         second_value = _finite_number(second_record.get(field))
         if first_value is None or second_value is None:

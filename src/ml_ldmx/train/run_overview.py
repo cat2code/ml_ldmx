@@ -9,6 +9,7 @@ import sys
 
 import torch
 
+from ml_ldmx.datasets.tensorize import DOMINANT_ORIGIN_TARGET_RULE
 from ml_ldmx.io.artifacts import save_json
 from ml_ldmx.io.root_files import root_file_sort_key
 
@@ -190,6 +191,11 @@ def build_run_overview(
         },
         "preprocessing": {
             "target_mode": args.target_mode,
+            "hard_origin_target_rule": getattr(
+                args,
+                "hard_origin_target_rule",
+                DOMINANT_ORIGIN_TARGET_RULE,
+            ),
             "valid_labels": list(args.valid_labels),
             "normalize_features": not bool(args.no_normalize_features),
             "feature_norm": _feature_norm_overview(feature_norm),
@@ -281,6 +287,7 @@ def render_run_overview_markdown(overview):
         "",
         "## Preprocessing",
         f"- Target mode: `{preprocessing['target_mode']}`",
+        f"- Hard-origin target rule: `{preprocessing['hard_origin_target_rule']}`",
         f"- Valid labels: `{preprocessing['valid_labels']}`",
         f"- Normalize features: `{preprocessing['normalize_features']}`",
         f"- View function: `{preprocessing['view_fn']}`",

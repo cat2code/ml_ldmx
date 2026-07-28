@@ -34,11 +34,16 @@ from ml_ldmx.datasets.ecal_tpad_dataset import (
 from ml_ldmx.datasets.ecal_tpad_loading import load_ecal_tpad_tensor_events
 from ml_ldmx.datasets.preprocess import normalize_continuous_features
 from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.datasets.tensorize import DOMINANT_ORIGIN_TARGET_RULE
 from ml_ldmx.eval.ecal_tpad_mlpf_lite import evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
 from ml_ldmx.io.root_files import find_root_files
 from ml_ldmx.models import ECalTpadMLPFLiteTransformer
-from ml_ldmx.train.checkpoints import load_checkpoint, save_checkpoint
+from ml_ldmx.train.checkpoints import (
+    load_checkpoint,
+    require_matching_hard_origin_target_rule,
+    save_checkpoint,
+)
 from ml_ldmx.train.ecal_tpad_mlpf_lite import train_one_epoch
 from ml_ldmx.train.logging import setup_logging
 from ml_ldmx.train.modeling import count_trainable_parameters, model_kwargs_from_args
@@ -157,7 +162,9 @@ def parse_args():
         action="store_true",
         help="Continue if fewer events than --max-events are found.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.hard_origin_target_rule = DOMINANT_ORIGIN_TARGET_RULE
+    return args
 
 
 def _json_ready(value):
@@ -197,6 +204,7 @@ def tensor_cache_spec(args, data_dir, root_files):
         "max_events": int(args.max_events),
         "valid_labels": [int(label) for label in args.valid_labels],
         "target_mode": args.target_mode,
+        "hard_origin_target_rule": args.hard_origin_target_rule,
         "filter_noise": bool(filter_noise),
         "ecal_energy_transform": args.ecal_energy_transform,
         "tpad_pe_transform": args.tpad_pe_transform,
@@ -274,6 +282,7 @@ def write_tensor_cache(cache_dir, events, event_sources, spec, signature, elapse
         "preprocess_elapsed_sec": float(elapsed_sec),
         "ecal_energy_transform": args.ecal_energy_transform,
         "tpad_pe_transform": args.tpad_pe_transform,
+        "hard_origin_target_rule": args.hard_origin_target_rule,
         "feature_layout": [
             "is_ecal",
             "is_tpad",
@@ -317,6 +326,7 @@ def load_tensor_events(args, data_dir, root_files, logger):
         read_step_size=read_step_size,
         ecal_energy_transform=args.ecal_energy_transform,
         tpad_pe_transform=args.tpad_pe_transform,
+        hard_origin_target_rule=args.hard_origin_target_rule,
     )
     preprocess_elapsed = time.perf_counter() - preprocess_start
     logger.info(
@@ -436,6 +446,7 @@ def main():
         len(splits["test"]),
     )
     logger.info("Target mode: %s", args.target_mode)
+    logger.info("Hard-origin target rule: %s", args.hard_origin_target_rule)
     if args.target_mode != "physical-origin":
         logger.info(
             "Training origin-id order counts after canonicalization: %s",
@@ -482,6 +493,10 @@ def main():
                 f"Checkpoint target mode {checkpoint_target_mode!r} does not match current "
                 f"target mode {args.target_mode!r}."
             )
+        require_matching_hard_origin_target_rule(
+            checkpoint,
+            args.hard_origin_target_rule,
+        )
         history = checkpoint.get("history", [])
         best_val_loss = checkpoint.get("best_val_loss", float("inf"))
         start_epoch = int(checkpoint["epoch"]) + 1

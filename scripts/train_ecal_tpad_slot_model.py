@@ -40,10 +40,15 @@ from ml_ldmx.datasets.preprocess import (
     normalize_event_continuous_features,
 )
 from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.datasets.tensorize import DOMINANT_ORIGIN_TARGET_RULE
 from ml_ldmx.eval.ecal_tpad_slot_model import evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
 from ml_ldmx.models import ECalTpadSlotModel
-from ml_ldmx.train.checkpoints import load_checkpoint, save_checkpoint
+from ml_ldmx.train.checkpoints import (
+    load_checkpoint,
+    require_matching_hard_origin_target_rule,
+    save_checkpoint,
+)
 from ml_ldmx.train.ecal_tpad_slot_model import train_one_epoch
 from ml_ldmx.train.ecal_tpad_slot_model import ecal_mask_from_event
 from ml_ldmx.train.logging import setup_logging
@@ -206,6 +211,7 @@ def parse_args():
     )
     args = parser.parse_args()
     args.output_dir = args.output_root
+    args.hard_origin_target_rule = DOMINANT_ORIGIN_TARGET_RULE
     return args
 
 
@@ -230,6 +236,7 @@ def load_events(args, logger):
             logger=logger,
             ecal_energy_transform=args.ecal_energy_transform,
             tpad_pe_transform=args.tpad_pe_transform,
+            hard_origin_target_rule=args.hard_origin_target_rule,
         )
     if args.processed_cache is not None:
         processed_cache = args.processed_cache
@@ -255,6 +262,7 @@ def load_events(args, logger):
             read_step_size=read_step_size,
             ecal_energy_transform=args.ecal_energy_transform,
             tpad_pe_transform=args.tpad_pe_transform,
+            hard_origin_target_rule=args.hard_origin_target_rule,
         )
     processed_dir = resolve_existing_path(args.processed_dir, project_root=PROJECT_ROOT)
     if args.supervise_noise:
@@ -292,6 +300,7 @@ def load_events(args, logger):
         read_step_size=read_step_size,
         ecal_energy_transform=args.ecal_energy_transform,
         tpad_pe_transform=args.tpad_pe_transform,
+        hard_origin_target_rule=args.hard_origin_target_rule,
     )
 
 
@@ -388,6 +397,7 @@ def prepare_targets_and_features(events, splits, args, logger):
                 valid_labels=tuple(args.valid_labels),
                 target_mode=args.target_mode,
                 max_electrons=args.max_electrons,
+                hard_origin_target_rule=args.hard_origin_target_rule,
             )
 
         events.set_event_transform(target_transform)
@@ -407,6 +417,7 @@ def prepare_targets_and_features(events, splits, args, logger):
         valid_labels=tuple(args.valid_labels),
         target_mode=args.target_mode,
         max_electrons=args.max_electrons,
+        hard_origin_target_rule=args.hard_origin_target_rule,
     )
     if not args.no_normalize_features:
         feature_norm = normalize_continuous_features(events, splits["train"])
@@ -557,6 +568,7 @@ def main():
         len(splits["test"]),
     )
     logger.info("Target mode: %s", args.target_mode)
+    logger.info("Hard-origin target rule: %s", args.hard_origin_target_rule)
     feature_norm = prepare_targets_and_features(events, splits, args, logger)
     if args.supervise_noise:
         num_noise = sum(int(event["is_noise_target"].sum().item()) for event in events)
@@ -598,6 +610,10 @@ def main():
                 f"Checkpoint target mode {checkpoint_target_mode!r} does not match current "
                 f"target mode {args.target_mode!r}."
             )
+        require_matching_hard_origin_target_rule(
+            checkpoint,
+            args.hard_origin_target_rule,
+        )
         history = checkpoint.get("history", [])
         best_val_loss = checkpoint.get("best_val_loss", float("inf"))
         start_epoch = int(checkpoint["epoch"]) + 1

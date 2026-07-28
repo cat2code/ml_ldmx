@@ -12,6 +12,12 @@ Current implementation is simple and readable, not yet optimized.
 
 ECAL_ENERGY_TRANSFORMS = ("raw", "log1p")
 TPAD_PE_TRANSFORMS = ("raw", "log1p")
+DOMINANT_ORIGIN_TARGET_RULE = "max-summed-edep-by-origin-v1"
+LEGACY_DOMINANT_ORIGIN_TARGET_RULE = "max-individual-edep-contribution-v1"
+HARD_ORIGIN_TARGET_RULES = (
+    DOMINANT_ORIGIN_TARGET_RULE,
+    LEGACY_DOMINANT_ORIGIN_TARGET_RULE,
+)
 
 
 def transform_ecal_energy(energy, mode="raw"):
@@ -104,23 +110,91 @@ def tensorize_ecal_truth(event):
     return truth
 
 
+def _summed_energy_by_origin(edeps, origins):
+    """Return total deposited energy for each origin represented in one hit."""
+    if len(edeps) != len(origins):
+        raise ValueError(
+            f"Found {len(edeps)} edep contributions but {len(origins)} origin contributions."
+        )
+
+    energy_by_origin = {}
+    for edep, origin in zip(edeps, origins):
+        energy = float(edep)
+        if not np.isfinite(energy):
+            raise ValueError(f"Deposited-energy contribution must be finite, found {energy}.")
+        if energy < 0.0:
+            raise ValueError(
+                f"Deposited-energy contribution must be non-negative, found {energy}."
+            )
+        origin = int(origin)
+        energy_by_origin[origin] = energy_by_origin.get(origin, 0.0) + energy
+    return energy_by_origin
+
+
+def _dominant_origin_from_summed_energy(edeps, origins, label_order=()):
+    """Select the origin with the largest summed energy, with deterministic ties."""
+    energy_by_origin = _summed_energy_by_origin(edeps, origins)
+    if not energy_by_origin:
+        raise ValueError("Cannot select a dominant origin from an empty contribution list.")
+    if sum(energy_by_origin.values()) <= 0.0:
+        raise ValueError("Cannot select a dominant origin from non-positive total energy.")
+
+    priority = {int(label): idx for idx, label in enumerate(label_order)}
+    fallback_priority = len(priority)
+    return min(
+        energy_by_origin,
+        key=lambda origin: (
+            -energy_by_origin[origin],
+            priority.get(origin, fallback_priority),
+            origin,
+        ),
+    )
+
+
+def _dominant_origin(
+    edeps,
+    origins,
+    hard_origin_target_rule,
+    label_order=(),
+):
+    if hard_origin_target_rule == DOMINANT_ORIGIN_TARGET_RULE:
+        return _dominant_origin_from_summed_energy(
+            edeps,
+            origins,
+            label_order=label_order,
+        )
+    if hard_origin_target_rule == LEGACY_DOMINANT_ORIGIN_TARGET_RULE:
+        return int(origins[int(np.argmax(edeps))])
+    raise ValueError(
+        f"Unknown hard-origin target rule {hard_origin_target_rule!r}; "
+        f"expected one of {HARD_ORIGIN_TARGET_RULES}."
+    )
+
+
 def dominant_origin_class_labels(
     event,
     valid_labels=(1, 2, 3),
     filter_noise=True,
     supervise_noise=False,
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """
-    Build per-hit class labels from the dominant deposited-energy contribution.
+    Build per-hit class labels using the selected versioned hard-target rule.
 
-    The physical labels are origin IDs in valid_labels. By default, returned
-    class labels are zero-based for PyTorch losses. With ``supervise_noise``,
-    retained ``noise_flag`` hits receive physical/class label 0 for the
-    advanced slot-model background output; non-noise physical origin IDs are
-    retained for later canonical slot mapping.
+    The default rule groups contributions by origin and selects the largest
+    total deposited energy. The physical labels are origin IDs in valid_labels.
+    Returned class labels are zero-based for PyTorch losses by default. With
+    ``supervise_noise``, retained ``noise_flag`` hits receive physical/class
+    label 0 for the advanced slot-model background output; non-noise physical
+    origin IDs are retained for later canonical slot mapping.
     """
     if supervise_noise and filter_noise:
         raise ValueError("supervise_noise requires filter_noise=False so labelled noise hits are retained.")
+    if hard_origin_target_rule not in HARD_ORIGIN_TARGET_RULES:
+        raise ValueError(
+            f"Unknown hard-origin target rule {hard_origin_target_rule!r}; "
+            f"expected one of {HARD_ORIGIN_TARGET_RULES}."
+        )
 
     label_offset = 1 if supervise_noise else 0
     label_to_class = {label: idx + label_offset for idx, label in enumerate(valid_labels)}
@@ -147,8 +221,15 @@ def dominant_origin_class_labels(
             physical_labels.append(0)
             class_labels.append(0)
             selected_noise_flags.append(True)
-            if edeps and len(edeps) == len(origins):
-                origin_id_labels.append(int(origins[int(np.argmax(edeps))]))
+            if len(edeps) > 0 and len(edeps) == len(origins):
+                origin_id_labels.append(
+                    _dominant_origin(
+                        edeps,
+                        origins,
+                        hard_origin_target_rule=hard_origin_target_rule,
+                        label_order=valid_labels,
+                    )
+                )
             else:
                 origin_id_labels.append(-1)
             continue
@@ -163,12 +244,16 @@ def dominant_origin_class_labels(
                 f"{len(origins)} origin contributions."
             )
 
-        dom = int(np.argmax(edeps))
-        physical_label = int(origins[dom])
+        physical_label = _dominant_origin(
+            edeps,
+            origins,
+            hard_origin_target_rule=hard_origin_target_rule,
+            label_order=valid_labels,
+        )
         if physical_label not in label_to_class:
             raise ValueError(
                 f"Hit {hit_ids[ihit]} has dominant origin label {physical_label}, "
-                f"but this prototype only accepts {tuple(valid_labels)}."
+                f"but the configured labels are {tuple(valid_labels)}."
             )
 
         keep_indices.append(ihit)
@@ -186,6 +271,7 @@ def dominant_origin_class_labels(
         "class_labels": torch.tensor(class_labels, dtype=torch.long),
         "label_to_class": label_to_class,
         "class_to_label": {idx: label for label, idx in label_to_class.items()},
+        "hard_origin_target_rule": hard_origin_target_rule,
     }
     if supervise_noise:
         labels["is_noise_target"] = torch.tensor(selected_noise_flags, dtype=torch.bool)
@@ -249,17 +335,18 @@ def origin_energy_fraction_targets(
                 f"{len(origins)} origin contributions."
             )
 
-        total_edep = float(sum(float(edep) for edep in edeps))
+        energy_by_origin = _summed_energy_by_origin(edeps, origins)
+        total_edep = float(sum(energy_by_origin.values()))
         if total_edep <= 0.0:
             raise ValueError(
                 f"Hit {hit_ids[ihit]} has non-positive total deposited energy "
                 f"({total_edep}); cannot normalize origin fractions."
             )
 
-        for edep, origin in zip(edeps, origins):
-            column = label_to_column.get(int(origin))
+        for origin, origin_edep in energy_by_origin.items():
+            column = label_to_column.get(origin)
             if column is not None:
-                targets[row_idx, column] += float(edep) / total_edep
+                targets[row_idx, column] = origin_edep / total_edep
 
     return targets
 
@@ -270,6 +357,7 @@ def tensorize_ecal_node_classification(
     filter_noise=True,
     supervise_noise=False,
     ecal_energy_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     x, pos = tensorize_ecal_event(event, ecal_energy_transform=ecal_energy_transform)
     raw_energy = _as_tensor(event["energy"], torch.float32)
@@ -278,6 +366,7 @@ def tensorize_ecal_node_classification(
         valid_labels=valid_labels,
         filter_noise=filter_noise,
         supervise_noise=supervise_noise,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     keep_indices = labels["keep_indices"]
     tensors = {
@@ -290,6 +379,7 @@ def tensorize_ecal_node_classification(
         "keep_indices": keep_indices,
         "label_to_class": labels["label_to_class"],
         "class_to_label": labels["class_to_label"],
+        "hard_origin_target_rule": labels["hard_origin_target_rule"],
     }
     if supervise_noise:
         tensors["is_noise_target"] = labels["is_noise_target"]
@@ -331,6 +421,7 @@ def tensorize_ecal_with_triggerpad_context(
     supervise_noise=False,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """
     Build one ECal + TriggerPadTracks node tensor for context-aware models.
@@ -352,6 +443,7 @@ def tensorize_ecal_with_triggerpad_context(
         filter_noise=filter_noise,
         supervise_noise=supervise_noise,
         ecal_energy_transform=ecal_energy_transform,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     tpad = tensorize_trigger_pad_tracks(event, tpad_pe_transform=tpad_pe_transform)
     trigger_pad_tracks = event.get("trigger_pad_tracks", {})
@@ -407,6 +499,7 @@ def tensorize_ecal_with_triggerpad_context(
         "keep_indices": ecal["keep_indices"],
         "label_to_class": ecal["label_to_class"],
         "class_to_label": ecal["class_to_label"],
+        "hard_origin_target_rule": ecal["hard_origin_target_rule"],
     }
     for key in ("is_noise_target", "origin_id_y"):
         if key in ecal:

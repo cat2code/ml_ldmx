@@ -14,7 +14,10 @@ import torch
 
 from ml_ldmx.datasets.ecal_tpad_dataset import save_tensor_event, write_manifest
 from ml_ldmx.datasets.graph_builder import build_ecal_tpad_context_graph
-from ml_ldmx.datasets.tensorize import tensorize_ecal_with_triggerpad_context
+from ml_ldmx.datasets.tensorize import (
+    DOMINANT_ORIGIN_TARGET_RULE,
+    tensorize_ecal_with_triggerpad_context,
+)
 from ml_ldmx.io.root_reader import read_ecal_rechits_with_truth_and_triggerpad_context
 
 
@@ -77,6 +80,7 @@ def main():
     )
     print(f"ECal reconstructed-energy input transform: {args.ecal_energy_transform}")
     print(f"TriggerPadTracks pe input transform: {args.tpad_pe_transform}")
+    print(f"Hard-origin target rule: {DOMINANT_ORIGIN_TARGET_RULE}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     event_files = []
@@ -101,6 +105,7 @@ def main():
             "tpad_mask": tensors["tpad_mask"],
             "y": tensors["y"],
             "physical_y": tensors["physical_y"],
+            "hard_origin_target_rule": tensors["hard_origin_target_rule"],
             "event_idx": torch.tensor(event_idx, dtype=torch.long),
         }
         if not args.no_edge_index:
@@ -137,6 +142,7 @@ def main():
             "num_events": len(event_files),
             "valid_labels": list(VALID_LABELS),
             "filter_noise": filter_noise,
+            "hard_origin_target_rule": DOMINANT_ORIGIN_TARGET_RULE,
             "ecal_energy_transform": args.ecal_energy_transform,
             "tpad_pe_transform": args.tpad_pe_transform,
             "feature_layout": [

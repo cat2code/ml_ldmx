@@ -20,6 +20,10 @@ from ml_ldmx.datasets.model_views import (
     ecal_tpad_transformer_view,
     ecal_transformer_view,
 )
+from ml_ldmx.datasets.tensorize import (
+    DOMINANT_ORIGIN_TARGET_RULE,
+    LEGACY_DOMINANT_ORIGIN_TARGET_RULE,
+)
 from ml_ldmx.models import (
     ECalGravNet,
     ECalTpadGravNet,
@@ -134,18 +138,38 @@ def _canonical_smoke_event() -> tuple[dict, Path]:
     raw_event, source = _load_raw_smoke_event()
     event = filter_noise_tensor_event(raw_event)
     original_physical_y = event["physical_y"].clone()
+    has_origin_fractions = (
+        "origin_id_fraction_target" in event or "fraction_target" in event
+    )
+    hard_origin_target_rule = (
+        DOMINANT_ORIGIN_TARGET_RULE
+        if has_origin_fractions
+        else LEGACY_DOMINANT_ORIGIN_TARGET_RULE
+    )
+    expected_origin_id_y = original_physical_y
+    if has_origin_fractions:
+        fractions = event.get(
+            "origin_id_fraction_target", event["fraction_target"]
+        )
+        label_order = event.get(
+            "origin_id_fraction_label_order", event["target_label_order"]
+        )
+        expected_origin_id_y = torch.as_tensor(label_order, dtype=torch.long)[
+            fractions.argmax(dim=1)
+        ]
     apply_variable_count_target_mode(
         event,
         valid_labels=VALID_LABELS,
         target_mode=TARGET_MODE,
         max_electrons=len(VALID_LABELS),
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     if "canonical_y" not in event:
         raise AssertionError("canonical-y target preparation did not expose event['canonical_y'].")
     if "origin_id_y" not in event:
         raise AssertionError("canonical-y target preparation did not retain event['origin_id_y'].")
-    if not torch.equal(event["origin_id_y"], original_physical_y):
-        raise AssertionError("event['origin_id_y'] does not preserve pre-canonical physical origins.")
+    if not torch.equal(event["origin_id_y"], expected_origin_id_y):
+        raise AssertionError("event['origin_id_y'] does not match the selected hard-origin rule.")
     return event, source
 
 

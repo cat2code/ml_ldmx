@@ -107,6 +107,32 @@ class RunComparisonTest(unittest.TestCase):
         self.assertEqual(len(matches), 11)
         self.assertEqual(info["first_only_events"], 1)
 
+    def test_matching_allows_target_derived_geometry_to_change(self):
+        second_records = [dict(record) for record in self.second_records]
+        second_records[0]["dominant_min_normalized_shower_separation_xy"] += 0.5
+        second_records[0]["ambiguous_hit_fraction_xy"] += 0.1
+
+        matches, _info = match_record_sets(
+            "Summed target",
+            self.first_records,
+            "Individual target",
+            second_records,
+        )
+
+        self.assertEqual(len(matches), 12)
+
+    def test_matching_rejects_contributor_geometry_changes(self):
+        second_records = [dict(record) for record in self.second_records]
+        second_records[0]["contributor_min_normalized_shower_separation_xy"] += 0.5
+
+        with self.assertRaisesRegex(ValueError, "contributor_min_normalized"):
+            match_record_sets(
+                "First",
+                self.first_records,
+                "Second",
+                second_records,
+            )
+
     def test_profiles_and_interesting_groups_are_created(self):
         labels = ["Transformer", "GravNet"]
         rows, slugs, _match_info = self._matched_rows()

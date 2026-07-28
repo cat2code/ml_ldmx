@@ -12,12 +12,18 @@ from torch.utils.data import Dataset
 
 from ml_ldmx.io.root_files import find_root_files
 from ml_ldmx.io.root_reader import iter_ecal_rechits_with_truth_and_triggerpad_context
-from ml_ldmx.datasets.tensorize import ECAL_ENERGY_TRANSFORMS, TPAD_PE_TRANSFORMS
+from ml_ldmx.datasets.tensorize import (
+    DOMINANT_ORIGIN_TARGET_RULE,
+    ECAL_ENERGY_TRANSFORMS,
+    HARD_ORIGIN_TARGET_RULES,
+    LEGACY_DOMINANT_ORIGIN_TARGET_RULE,
+    TPAD_PE_TRANSFORMS,
+)
 
 
 SHARD_CACHE_SCHEMA_VERSION = 1
 SHARD_PAYLOAD_SCHEMA_VERSION = 1
-PARALLEL_PLAN_SCHEMA_VERSION = 1
+PARALLEL_PLAN_SCHEMA_VERSION = 2
 FEATURE_LAYOUT = [
     "is_ecal",
     "is_tpad",
@@ -80,6 +86,7 @@ def _cache_spec(
     max_events_per_root_file,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     if ecal_energy_transform not in ECAL_ENERGY_TRANSFORMS:
         raise ValueError(
@@ -91,6 +98,11 @@ def _cache_spec(
             f"Unknown TriggerPadTracks pe transform {tpad_pe_transform!r}; "
             f"expected one of {TPAD_PE_TRANSFORMS}."
         )
+    if hard_origin_target_rule not in HARD_ORIGIN_TARGET_RULES:
+        raise ValueError(
+            f"Unknown hard-origin target rule {hard_origin_target_rule!r}; "
+            f"expected one of {HARD_ORIGIN_TARGET_RULES}."
+        )
     return {
         "reader": "ecal_tpad_sharded",
         "schema_version": SHARD_CACHE_SCHEMA_VERSION,
@@ -101,6 +113,7 @@ def _cache_spec(
         "ecal_energy_transform": ecal_energy_transform,
         "tpad_pe_transform": tpad_pe_transform,
         "stored_target_mode": "physical-origin",
+        "hard_origin_target_rule": hard_origin_target_rule,
         "max_events_per_root_file": max_events_per_root_file,
         "feature_layout": FEATURE_LAYOUT,
     }
@@ -110,11 +123,24 @@ def _normalized_cache_spec(spec):
     spec = dict(spec or {})
     spec.setdefault("ecal_energy_transform", "raw")
     spec.setdefault("tpad_pe_transform", "raw")
+    spec.setdefault("hard_origin_target_rule", LEGACY_DOMINANT_ORIGIN_TARGET_RULE)
     return spec
 
 
 def _cache_specs_match(actual, requested):
     return _normalized_cache_spec(actual) == _normalized_cache_spec(requested)
+
+
+def _cache_specs_compatible_for_loading(actual, requested):
+    """Allow legacy shards to migrate forward through their stored fraction targets."""
+    actual = _normalized_cache_spec(actual)
+    requested = _normalized_cache_spec(requested)
+    if (
+        actual.get("hard_origin_target_rule") == LEGACY_DOMINANT_ORIGIN_TARGET_RULE
+        and requested.get("hard_origin_target_rule") == DOMINANT_ORIGIN_TARGET_RULE
+    ):
+        actual["hard_origin_target_rule"] = DOMINANT_ORIGIN_TARGET_RULE
+    return actual == requested
 
 
 def _load_json(path):
@@ -136,6 +162,7 @@ def validate_sharded_cache_request(
     max_events_per_root_file=None,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """Require an existing cache to correspond to the requested raw dataset/settings."""
     manifest = _load_json(Path(cache_dir) / "manifest.json")
@@ -147,8 +174,12 @@ def validate_sharded_cache_request(
         max_events_per_root_file=max_events_per_root_file,
         ecal_energy_transform=ecal_energy_transform,
         tpad_pe_transform=tpad_pe_transform,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
-    if not _cache_specs_match(manifest.get("cache_spec"), requested_spec):
+    if not _cache_specs_compatible_for_loading(
+        manifest.get("cache_spec"),
+        requested_spec,
+    ):
         raise ValueError(
             f"Existing sharded cache does not match requested ROOT inputs/settings: {cache_dir}. "
             "Choose a different --processed-cache or pass --force-sharded-cache."
@@ -231,6 +262,7 @@ def prepare_sharded_tensor_cache(
     resume_from_root_index=1,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
     logger=None,
 ):
     """Create or resume a one-ROOT-file-per-shard canonical tensor cache."""
@@ -253,6 +285,7 @@ def prepare_sharded_tensor_cache(
         max_events_per_root_file=max_events_per_root_file,
         ecal_energy_transform=ecal_energy_transform,
         tpad_pe_transform=tpad_pe_transform,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     manifest_path = cache_dir / "manifest.json"
     index_path = cache_dir / "index.json"
@@ -276,6 +309,7 @@ def prepare_sharded_tensor_cache(
         "supervise_noise": bool(supervise_noise),
         "ecal_energy_transform": ecal_energy_transform,
         "tpad_pe_transform": tpad_pe_transform,
+        "hard_origin_target_rule": hard_origin_target_rule,
         "valid_labels": list(valid_labels),
     }
     _write_json(manifest_path, manifest)
@@ -349,6 +383,7 @@ def prepare_sharded_tensor_cache(
                         supervise_noise=supervise_noise,
                         ecal_energy_transform=ecal_energy_transform,
                         tpad_pe_transform=tpad_pe_transform,
+                        hard_origin_target_rule=hard_origin_target_rule,
                     )
                     attach_root_source_metadata(
                         event,
@@ -464,6 +499,7 @@ def create_parallel_shard_plan(
     max_events_per_root_file=None,
     ecal_energy_transform="log1p",
     tpad_pe_transform="log1p",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """Freeze deterministic, parallel-safe work for one or more ROOT sources."""
     output_root = Path(output_root).resolve()
@@ -512,6 +548,7 @@ def create_parallel_shard_plan(
         max_events_per_root_file=max_events_per_root_file,
         ecal_energy_transform=ecal_energy_transform,
         tpad_pe_transform=tpad_pe_transform,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     preprocessing_spec.pop("root_sources")
     plan = {
@@ -605,6 +642,7 @@ def prepare_parallel_shard_task(
                     supervise_noise=spec["supervise_noise"],
                     ecal_energy_transform=spec["ecal_energy_transform"],
                     tpad_pe_transform=spec["tpad_pe_transform"],
+                    hard_origin_target_rule=spec["hard_origin_target_rule"],
                 )
                 attach_root_source_metadata(
                     event,
@@ -795,6 +833,7 @@ def finalize_parallel_shard_plan(
             "supervise_noise": spec["supervise_noise"],
             "ecal_energy_transform": spec["ecal_energy_transform"],
             "tpad_pe_transform": spec["tpad_pe_transform"],
+            "hard_origin_target_rule": spec["hard_origin_target_rule"],
             "valid_labels": spec["valid_labels"],
             "parallel_plan": str(Path(plan_path).resolve()),
         }
@@ -912,6 +951,9 @@ class ShardedECalTpadDataset(Dataset):
             "cache_misses": int(self._cache_misses),
             "cache_evictions": int(self._cache_evictions),
             "shard_event_counts": self.shard_event_counts,
+            "hard_origin_target_rule": _normalized_cache_spec(
+                self.metadata.get("cache_spec")
+            )["hard_origin_target_rule"],
         }
 
     def _shard_idx_for_event(self, index):

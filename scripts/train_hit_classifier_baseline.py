@@ -38,11 +38,16 @@ from ml_ldmx.datasets.preprocess import (
     normalize_event_continuous_features,
 )
 from ml_ldmx.datasets.stats import count_classes, target_order_counts
+from ml_ldmx.datasets.tensorize import DOMINANT_ORIGIN_TARGET_RULE
 from ml_ldmx.eval.event_diagnostics import select_representative_events
 from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
 from ml_ldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
-from ml_ldmx.train.checkpoints import load_checkpoint, save_checkpoint
+from ml_ldmx.train.checkpoints import (
+    load_checkpoint,
+    require_matching_hard_origin_target_rule,
+    save_checkpoint,
+)
 from ml_ldmx.train.hit_classifier_baseline import compute_event_losses, train_one_epoch
 from ml_ldmx.train.logging import setup_logging
 from ml_ldmx.train.modeling import count_trainable_parameters
@@ -231,6 +236,7 @@ def parse_args():
     parser.add_argument("--allow-fewer-events", action="store_true")
     args = parser.parse_args()
     args.output_dir = args.output_root
+    args.hard_origin_target_rule = DOMINANT_ORIGIN_TARGET_RULE
     return args
 
 
@@ -303,6 +309,7 @@ def load_events(args, logger):
             logger=logger,
             ecal_energy_transform=args.ecal_energy_transform,
             tpad_pe_transform=args.tpad_pe_transform,
+            hard_origin_target_rule=args.hard_origin_target_rule,
         )
     if args.processed_cache is not None:
         processed_cache = args.processed_cache
@@ -328,6 +335,7 @@ def load_events(args, logger):
             read_step_size=read_step_size,
             ecal_energy_transform=args.ecal_energy_transform,
             tpad_pe_transform=args.tpad_pe_transform,
+            hard_origin_target_rule=args.hard_origin_target_rule,
         )
     processed_dir = resolve_existing_path(args.processed_dir, project_root=PROJECT_ROOT)
     events, event_sources, data_dir, root_files = load_processed_or_grouped_root_tensor_events(
@@ -349,6 +357,7 @@ def load_events(args, logger):
         allow_incomplete_sharded_cache=args.allow_incomplete_sharded_cache,
         ecal_energy_transform=args.ecal_energy_transform,
         tpad_pe_transform=args.tpad_pe_transform,
+        hard_origin_target_rule=args.hard_origin_target_rule,
     )
     if isinstance(events, (ShardedECalTpadDataset, MultiShardedECalTpadDataset)):
         logger.info("Training lazily from ML-ready processed shards: %s", data_dir)
@@ -382,6 +391,7 @@ def prepare_targets_and_features(events, splits, args, logger):
                 valid_labels=tuple(args.valid_labels),
                 target_mode=args.target_mode,
                 max_electrons=len(args.valid_labels),
+                hard_origin_target_rule=args.hard_origin_target_rule,
             )
 
         events.set_event_transform(target_transform)
@@ -401,6 +411,7 @@ def prepare_targets_and_features(events, splits, args, logger):
         valid_labels=tuple(args.valid_labels),
         target_mode=args.target_mode,
         max_electrons=len(args.valid_labels),
+        hard_origin_target_rule=args.hard_origin_target_rule,
     )
     if not args.no_normalize_features:
         feature_norm = normalize_continuous_features(events, splits["train"])
@@ -805,7 +816,11 @@ def main():
     logger.info("Output directory: %s", run_dir)
     logger.info("Model: %s", args.model)
     logger.info("Using device: %s", device)
-    logger.info("Target mode: canonical-y; baseline training noise policy: filtered")
+    logger.info(
+        "Target mode: canonical-y; hard-origin target rule: %s; "
+        "baseline training noise policy: filtered",
+        args.hard_origin_target_rule,
+    )
 
     events, event_sources, data_dir, root_files = load_events(args, logger)
     splits = deterministic_split(len(events), args.seed, allow_small=args.allow_small_split)
@@ -855,6 +870,10 @@ def main():
             raise ValueError("Checkpoint model does not match --model.")
         if checkpoint_args.get("target_mode") not in (None, args.target_mode):
             raise ValueError("Checkpoint target mode does not match --target-mode.")
+        require_matching_hard_origin_target_rule(
+            checkpoint,
+            args.hard_origin_target_rule,
+        )
         history = checkpoint.get("history", [])
         best_val_loss = checkpoint.get("best_val_loss", float("inf"))
         start_epoch = int(checkpoint["epoch"]) + 1

@@ -4,7 +4,10 @@ from pathlib import Path
 import torch
 
 from ml_ldmx.datasets.tensorize import (
+    DOMINANT_ORIGIN_TARGET_RULE,
     ECAL_ENERGY_TRANSFORMS,
+    HARD_ORIGIN_TARGET_RULES,
+    LEGACY_DOMINANT_ORIGIN_TARGET_RULE,
     TPAD_PE_TRANSFORMS,
     origin_energy_fraction_targets,
     tensorize_ecal_with_triggerpad_context,
@@ -53,9 +56,169 @@ def _fraction_label_order(tensors, fraction_target, fallback_labels):
     )
 
 
-def apply_target_mode(tensors, valid_labels, target_mode):
+def _validate_cache_target_rule(cache_spec, requested_rule, cache_dir):
+    if requested_rule not in HARD_ORIGIN_TARGET_RULES:
+        raise ValueError(
+            f"Unknown hard-origin target rule {requested_rule!r}; "
+            f"expected one of {HARD_ORIGIN_TARGET_RULES}."
+        )
+    stored_rule = cache_spec.get(
+        "hard_origin_target_rule",
+        LEGACY_DOMINANT_ORIGIN_TARGET_RULE,
+    )
+    if stored_rule not in HARD_ORIGIN_TARGET_RULES:
+        raise ValueError(
+            f"Sharded cache {cache_dir} stores unknown hard-origin target rule "
+            f"{stored_rule!r}."
+        )
+    if (
+        requested_rule == LEGACY_DOMINANT_ORIGIN_TARGET_RULE
+        and stored_rule == DOMINANT_ORIGIN_TARGET_RULE
+    ):
+        raise ValueError(
+            f"Sharded cache {cache_dir} stores summed-origin labels, from which "
+            "legacy largest-individual-contribution labels cannot be recovered."
+        )
+    return stored_rule
+
+
+def _apply_hard_origin_target_rule(tensors, valid_labels, hard_origin_target_rule):
+    """Restore physical hard labels under the requested versioned target rule."""
+    if hard_origin_target_rule not in HARD_ORIGIN_TARGET_RULES:
+        raise ValueError(
+            f"Unknown hard-origin target rule {hard_origin_target_rule!r}; "
+            f"expected one of {HARD_ORIGIN_TARGET_RULES}."
+        )
+
+    stored_rule = tensors.get("hard_origin_target_rule")
+    if stored_rule is not None and stored_rule not in HARD_ORIGIN_TARGET_RULES:
+        raise ValueError(f"Event stores unknown hard-origin target rule {stored_rule!r}.")
+
+    if hard_origin_target_rule == LEGACY_DOMINANT_ORIGIN_TARGET_RULE:
+        if stored_rule == DOMINANT_ORIGIN_TARGET_RULE:
+            raise ValueError(
+                "Cannot recover legacy largest-individual-contribution labels from an "
+                "event stored with summed-origin labels."
+            )
+        return tensors
+
+    fraction_target = tensors.get(
+        "origin_id_fraction_target", tensors.get("fraction_target")
+    )
+    if fraction_target is None:
+        if stored_rule == DOMINANT_ORIGIN_TARGET_RULE:
+            return tensors
+        raise ValueError(
+            "Summed-origin hard labels require per-origin energy fractions when "
+            "migrating an event created under the legacy or unspecified rule."
+        )
+    if "physical_y" not in tensors:
+        raise KeyError("Summed-origin hard labels require event['physical_y'].")
+
+    fraction_target = fraction_target.to(dtype=torch.float32)
+    physical_y = tensors["physical_y"]
+    if fraction_target.ndim != 2 or fraction_target.shape[0] != physical_y.shape[0]:
+        raise ValueError(
+            "Physical-origin fractions must have one row per ECal hard target."
+        )
+
+    noise_mask = tensors.get("is_noise_target")
+    if noise_mask is None:
+        noise_mask = torch.zeros_like(physical_y, dtype=torch.bool)
+    else:
+        noise_mask = noise_mask.to(dtype=torch.bool)
+        if noise_mask.shape != physical_y.shape:
+            raise ValueError(
+                "event['is_noise_target'] must align with event['physical_y']."
+            )
+    electron_mask = ~noise_mask
+
+    electron_fractions = fraction_target[electron_mask]
+    if electron_fractions.numel() == 0:
+        raise ValueError("Event contains no non-noise ECal targets.")
+    if not bool(torch.isfinite(electron_fractions).all().item()):
+        raise ValueError("Physical-origin energy fractions must be finite.")
+    if bool((electron_fractions < 0).any().item()):
+        raise ValueError("Physical-origin energy fractions must be non-negative.")
+
+    row_sums = electron_fractions.sum(dim=1)
+    if not bool(
+        torch.allclose(
+            row_sums,
+            torch.ones_like(row_sums),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+    ):
+        raise ValueError(
+            "Stored physical-origin fractions do not account for all non-noise hit "
+            "energy, so summed-origin hard labels cannot be reconstructed safely."
+        )
+
+    fraction_label_order = _fraction_label_order(
+        tensors,
+        fraction_target,
+        fallback_labels=valid_labels,
+    )
+    column_labels = torch.as_tensor(
+        fraction_label_order,
+        dtype=torch.long,
+        device=physical_y.device,
+    )
+    dominant_labels = column_labels[
+        electron_fractions.to(device=physical_y.device).argmax(dim=1)
+    ]
+    valid_label_set = {int(label) for label in valid_labels}
+    unsupported = sorted(
+        {int(label) for label in dominant_labels.tolist()} - valid_label_set
+    )
+    if unsupported:
+        raise ValueError(
+            "Summed-energy dominant origins are outside the configured labels: "
+            f"{unsupported}; configured labels are {tuple(valid_labels)}."
+        )
+
+    restored_physical_y = physical_y.clone()
+    restored_physical_y[electron_mask] = dominant_labels
+    tensors["physical_y"] = restored_physical_y
+
+    origin_id_y = tensors.get("origin_id_y", restored_physical_y).clone()
+    origin_id_y[electron_mask] = dominant_labels
+    tensors["origin_id_y"] = origin_id_y
+    tensors["hard_origin_target_rule"] = DOMINANT_ORIGIN_TARGET_RULE
+    return tensors
+
+
+def apply_target_mode(
+    tensors,
+    valid_labels,
+    target_mode,
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
+):
+    _apply_hard_origin_target_rule(
+        tensors,
+        valid_labels=valid_labels,
+        hard_origin_target_rule=hard_origin_target_rule,
+    )
     axis = canonical_axis_from_target_mode(target_mode)
     if axis is None:
+        noise_mask = tensors.get("is_noise_target")
+        has_noise_class = (
+            noise_mask is not None
+            and bool(noise_mask.to(dtype=torch.bool).any().item())
+        )
+        class_offset = 1 if has_noise_class else 0
+        label_to_class = {
+            int(label): class_idx + class_offset
+            for class_idx, label in enumerate(valid_labels)
+        }
+        if has_noise_class:
+            label_to_class[0] = 0
+        tensors["y"] = torch.as_tensor(
+            [label_to_class[int(label)] for label in tensors["physical_y"].tolist()],
+            dtype=torch.long,
+            device=tensors["physical_y"].device,
+        )
         tensors["target_class_names"] = [f"origin {label}" for label in valid_labels]
         tensors["target_label_order"] = list(valid_labels)
         return tensors
@@ -105,7 +268,13 @@ def apply_target_mode(tensors, valid_labels, target_mode):
     return tensors
 
 
-def apply_variable_count_target_mode(tensors, valid_labels, target_mode, max_electrons):
+def apply_variable_count_target_mode(
+    tensors,
+    valid_labels,
+    target_mode,
+    max_electrons,
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
+):
     """
     Apply spatially ordered slot targets for events with varying multiplicity.
 
@@ -113,6 +282,12 @@ def apply_variable_count_target_mode(tensors, valid_labels, target_mode, max_ele
     targets retain their original physical-origin labels in ``origin_id_y`` and
     ``origin_id_fraction_target`` for provenance.
     """
+    _apply_hard_origin_target_rule(
+        tensors,
+        valid_labels=valid_labels,
+        hard_origin_target_rule=hard_origin_target_rule,
+    )
+
     original_fraction = None
     fraction_label_order = None
     if "fraction_target" in tensors:
@@ -139,6 +314,14 @@ def apply_variable_count_target_mode(tensors, valid_labels, target_mode, max_ele
     if axis is None:
         if bool(noise_mask.any().item()):
             raise ValueError("Explicit noise supervision currently requires a canonical target mode.")
+        label_to_class = {
+            int(label): class_idx for class_idx, label in enumerate(valid_labels)
+        }
+        tensors["y"] = torch.as_tensor(
+            [label_to_class[int(label)] for label in tensors["physical_y"].tolist()],
+            dtype=torch.long,
+            device=tensors["physical_y"].device,
+        )
         tensors["target_class_names"] = [f"origin {label}" for label in valid_labels]
         tensors["target_label_order"] = list(valid_labels)
         return tensors
@@ -205,13 +388,20 @@ def apply_variable_count_target_mode(tensors, valid_labels, target_mode, max_ele
     return tensors
 
 
-def apply_variable_count_target_mode_to_events(events, valid_labels, target_mode, max_electrons):
+def apply_variable_count_target_mode_to_events(
+    events,
+    valid_labels,
+    target_mode,
+    max_electrons,
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
+):
     for event in events:
         apply_variable_count_target_mode(
             event,
             valid_labels=valid_labels,
             target_mode=target_mode,
             max_electrons=max_electrons,
+            hard_origin_target_rule=hard_origin_target_rule,
         )
 
 
@@ -268,6 +458,7 @@ def ecal_tpad_event_to_tensors(
     supervise_noise=False,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     tensors = tensorize_ecal_with_triggerpad_context(
         event,
@@ -276,6 +467,7 @@ def ecal_tpad_event_to_tensors(
         supervise_noise=supervise_noise,
         ecal_energy_transform=ecal_energy_transform,
         tpad_pe_transform=tpad_pe_transform,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     tensors["event_idx"] = event_idx
     tensors["fraction_target"] = origin_energy_fraction_targets(
@@ -288,6 +480,7 @@ def ecal_tpad_event_to_tensors(
         tensors,
         valid_labels=valid_labels,
         target_mode=target_mode,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
 
 
@@ -340,6 +533,7 @@ def load_or_create_sharded_tensor_events(
     read_step_size=500,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """Reuse or create an ML-ready sharded cache and return its lazy dataset."""
     logger = logger or logging.getLogger(__name__)
@@ -356,6 +550,7 @@ def load_or_create_sharded_tensor_events(
             max_events_per_root_file=max_events_per_root_file,
             ecal_energy_transform=ecal_energy_transform,
             tpad_pe_transform=tpad_pe_transform,
+            hard_origin_target_rule=hard_origin_target_rule,
         )
         try:
             validate_sharded_tensor_cache(
@@ -380,6 +575,7 @@ def load_or_create_sharded_tensor_events(
             read_step_size=read_step_size,
             ecal_energy_transform=ecal_energy_transform,
             tpad_pe_transform=tpad_pe_transform,
+            hard_origin_target_rule=hard_origin_target_rule,
             logger=logger,
         )
     elif allow_incomplete_cache:
@@ -422,6 +618,7 @@ def load_multi_sharded_tensor_events(
     logger=None,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """Load multiple existing sharded caches as one lazy event dataset."""
     logger = logger or logging.getLogger(__name__)
@@ -435,6 +632,11 @@ def load_multi_sharded_tensor_events(
             allow_incomplete=allow_incomplete_cache,
         )
         cache_spec = dataset.metadata.get("cache_spec", {})
+        _validate_cache_target_rule(
+            cache_spec,
+            requested_rule=hard_origin_target_rule,
+            cache_dir=cache_dir,
+        )
         cache_transform = cache_spec.get("ecal_energy_transform", "raw")
         cache_tpad_transform = cache_spec.get("tpad_pe_transform", "raw")
         if cache_transform != ecal_energy_transform:
@@ -525,6 +727,7 @@ def load_ecal_tpad_tensor_events(
     read_step_size=500,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """
     Load labelled ECal + TriggerPadTracks ROOT events and tensorize them.
@@ -576,6 +779,7 @@ def load_ecal_tpad_tensor_events(
             supervise_noise=supervise_noise,
             ecal_energy_transform=ecal_energy_transform,
             tpad_pe_transform=tpad_pe_transform,
+            hard_origin_target_rule=hard_origin_target_rule,
         )
         selected_events.append(tensor_event)
         event_sources.append(
@@ -622,6 +826,7 @@ def load_grouped_root_tensor_events(
     read_step_size=500,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """
     Load multiple labelled ROOT source groups into the canonical combined form.
@@ -663,6 +868,7 @@ def load_grouped_root_tensor_events(
             read_step_size=read_step_size,
             ecal_energy_transform=ecal_energy_transform,
             tpad_pe_transform=tpad_pe_transform,
+            hard_origin_target_rule=hard_origin_target_rule,
         )
         for event, source in zip(loaded_events, sources):
             global_event_idx = len(events)
@@ -706,6 +912,7 @@ def load_processed_or_grouped_root_tensor_events(
     allow_incomplete_sharded_cache=False,
     ecal_energy_transform="raw",
     tpad_pe_transform="raw",
+    hard_origin_target_rule=DOMINANT_ORIGIN_TARGET_RULE,
 ):
     """
     Select an existing processed canonical dataset or build events from ROOT groups.
@@ -736,6 +943,11 @@ def load_processed_or_grouped_root_tensor_events(
             allow_incomplete=allow_incomplete_sharded_cache,
         )
         cache_spec = dataset.metadata.get("cache_spec", {})
+        _validate_cache_target_rule(
+            cache_spec,
+            requested_rule=hard_origin_target_rule,
+            cache_dir=processed_dir,
+        )
         cache_transform = cache_spec.get("ecal_energy_transform", "raw")
         cache_tpad_transform = cache_spec.get("tpad_pe_transform", "raw")
         if cache_transform != ecal_energy_transform:
@@ -804,5 +1016,6 @@ def load_processed_or_grouped_root_tensor_events(
         read_step_size=read_step_size,
         ecal_energy_transform=ecal_energy_transform,
         tpad_pe_transform=tpad_pe_transform,
+        hard_origin_target_rule=hard_origin_target_rule,
     )
     return events, event_sources, root_data_dir, root_files

@@ -56,7 +56,10 @@ The current slot-model runner is
    `tensorize_ecal_with_triggerpad_context()` and
    `origin_energy_fraction_targets()`. ECal nodes precede TriggerPadTracks
    nodes in a variable-length event tensor. Loss targets exist for ECal nodes
-   only; context nodes are selected away by `ecal_mask`.
+   only; context nodes are selected away by `ecal_mask`. A hit's dominant
+   physical origin is the electron whose contributions have the largest summed
+   deposited energy in that hit. Cache, run, and checkpoint metadata record the
+   versioned hard-origin target rule.
 4. **Target ordering.** For raw loading, the slot script first requests
    physical-origin targets, attaches the known `2e` or `3e` event count, then
    applies its variable-count canonical slot mapping. Its default
@@ -102,7 +105,7 @@ naming that exists in the current code.
 | `tpad_mask` | `bool [N]` | TriggerPadTracks context nodes; disjoint from `ecal_mask`. |
 | `ecal_pos` | `float32 [N_ecal, 3]` | Selected ECal hit `(x, y, z)` coordinates. |
 | `tpad` | `float32 [N_tpad, 2]` | TriggerPadTracks `(centroid, pe)` values. |
-| `origin_id_y` | `long [N_ecal]` | Dominant physical origin ID for provenance; `-1` when explicit noise has no contribution truth. |
+| `origin_id_y` | `long [N_ecal]` | Physical origin with the largest total deposited-energy contribution to the hit; `-1` when explicit noise has no contribution truth. |
 | `canonical_y` | `long [N_ecal]` | Zero-based electron class ordered by increasing mean ECal y; `-1` for explicit noise rows. |
 | `target_label_order` | `list[int]` | Physical origin IDs represented by `canonical_y` classes in order. |
 | `event_idx` | `long` | Stable event identifier within the selected tensor dataset. |
@@ -121,7 +124,8 @@ field:   is_ecal  is_tpad  ecal_x  ecal_y  ecal_z  ecal_energy  tpad_centroid  t
 - The current implementation places ECal nodes first and TPAD nodes second.
   Consumers should use masks rather than rely solely on ordering.
 - Manifest/config metadata must record schema version, feature layout, noise
-  policy, target ordering convention, selected ROOT files, and source entries.
+  policy, the versioned hard-origin rule, target ordering convention, selected
+  ROOT files, and source entries.
 
 ### Optional Advanced and Provenance Fields
 

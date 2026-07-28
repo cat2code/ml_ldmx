@@ -25,10 +25,12 @@ from ml_ldmx.datasets.ecal_tpad_loading import (
     apply_variable_count_target_mode,
     filter_noise_tensor_event,
 )
+from ml_ldmx.datasets.tensorize import HARD_ORIGIN_TARGET_RULES
 from ml_ldmx.datasets.preprocess import normalize_event_continuous_features
 from ml_ldmx.eval.event_diagnostics import select_representative_events
 from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics
 from ml_ldmx.io.artifacts import save_json
+from ml_ldmx.train.checkpoints import checkpoint_hard_origin_target_rule
 from ml_ldmx.train.logging import setup_logging
 from ml_ldmx.train.utils import resolve_device
 from ml_ldmx.viz.training import (
@@ -91,6 +93,16 @@ def parse_args():
     parser.add_argument("--device", choices=("cpu", "cuda", "mps", "auto"), default="auto")
     parser.add_argument("--event-diagnostic-radius-mm", type=float, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--evaluation-hard-origin-target-rule",
+        choices=HARD_ORIGIN_TARGET_RULES,
+        default=None,
+        help=(
+            "Evaluate predictions against a different hard-origin target rule "
+            "without changing the saved model. Use --output-dir to keep this "
+            "cross-target result separate from the checkpoint's native inspection."
+        ),
+    )
 
     data_group = parser.add_argument_group("relocated data overrides")
     data_group.add_argument("--data-root", type=Path, default=None)
@@ -161,6 +173,16 @@ def _path_value(value):
 def _training_args(checkpoint, config, inspection_args):
     stored_args = dict(config)
     stored_args.update(checkpoint.get("args", {}))
+    stored_args["hard_origin_target_rule"] = checkpoint_hard_origin_target_rule(
+        checkpoint
+    )
+    evaluation_rule = getattr(
+        inspection_args,
+        "evaluation_hard_origin_target_rule",
+        None,
+    )
+    if evaluation_rule is not None:
+        stored_args["hard_origin_target_rule"] = evaluation_rule
     defaults = {
         "model": None,
         "events_per_class": 10,
@@ -280,6 +302,11 @@ def restore_event_preprocessing(events, checkpoint, args):
             valid_labels=tuple(args.valid_labels),
             target_mode=args.target_mode,
             max_electrons=len(args.valid_labels),
+            hard_origin_target_rule=getattr(
+                args,
+                "hard_origin_target_rule",
+                checkpoint_hard_origin_target_rule(checkpoint),
+            ),
         )
         if feature_norm is not None:
             event = normalize_event_continuous_features(event, feature_norm)
@@ -358,6 +385,14 @@ def main():
     args = _training_args(checkpoint, config, inspection_args)
 
     output_dir = inspection_args.output_dir
+    if (
+        inspection_args.evaluation_hard_origin_target_rule is not None
+        and output_dir is None
+    ):
+        raise ValueError(
+            "--evaluation-hard-origin-target-rule requires --output-dir so a "
+            "cross-target inspection cannot overwrite the native result."
+        )
     if output_dir is None:
         output_dir = run_dir / "inspection" / checkpoint_path.stem / inspection_args.split
     output_dir = output_dir.resolve()
@@ -370,6 +405,13 @@ def main():
     logger.info("Inspecting run: %s", run_dir)
     logger.info("Checkpoint: %s", checkpoint_path)
     logger.info("Model: %s; split: %s; device: %s", args.model, inspection_args.split, device)
+    checkpoint_target_rule = checkpoint_hard_origin_target_rule(checkpoint)
+    if args.hard_origin_target_rule != checkpoint_target_rule:
+        logger.info(
+            "Cross-target evaluation: checkpoint rule=%s; evaluation rule=%s",
+            checkpoint_target_rule,
+            args.hard_origin_target_rule,
+        )
 
     events, _event_sources, data_dir, _root_files = training.load_events(args, logger)
     saved_split_indices = validate_saved_split(
@@ -477,6 +519,8 @@ def main():
         "split": inspection_args.split,
         "data_dir": str(data_dir),
         "used_saved_feature_normalization": checkpoint.get("feature_norm") is not None,
+        "checkpoint_hard_origin_target_rule": checkpoint_target_rule,
+        "evaluation_hard_origin_target_rule": args.hard_origin_target_rule,
         "event_diagnostic_radius_mm": float(args.event_diagnostic_radius_mm),
         "limited_to_first_split_events": inspection_args.max_inspection_events,
         "requested_event_indices": inspection_args.event_index,
