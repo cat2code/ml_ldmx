@@ -65,7 +65,7 @@ The current slot-model runner is
    applies its variable-count canonical slot mapping. Its default
    `canonical-y` mode orders origins by the mean ECal y-position of their
    selected hits.
-5. **Dataset policy.** The script constructs a deterministic 80/15/5
+5. **Dataset policy.** The script constructs a deterministic 80/10/10
    train/validation/test split, derives inverse-frequency origin and count
    weights from the training events, and normalizes continuous columns in `x`
    using training-split statistics only.

@@ -89,34 +89,29 @@ def _event_metric_record(
 
 
 @torch.no_grad()
-def collect_event_metrics(model, events, indices, view_fn, args, device):
-    """Collect hit-level accuracy summarized per event for a split."""
+def iter_event_predictions(model, events, indices, view_fn, args, device):
+    """Yield aligned model inputs and per-hit predictions for each split event."""
     model.eval()
     batch_kind = hit_classifier_batch_kind(model)
-    centroid_radius_mm = float(getattr(args, "event_diagnostic_radius_mm", 25.0))
     split_position = {int(event_idx): position for position, event_idx in enumerate(indices)}
     ordered_indices = (
         events.order_indices_for_access(indices)
         if hasattr(events, "order_indices_for_access")
         else indices
     )
-    records = []
     for batch_indices in chunks(ordered_indices, args.batch_size):
         if batch_kind is None:
             for event_idx in batch_indices:
                 losses = compute_event_losses(model, events[event_idx], view_fn, device)
-                records.append(
-                    _event_metric_record(
-                        event_idx=event_idx,
-                        split_position=split_position[int(event_idx)],
-                        view=losses["view"],
-                        true_class=losses["true_class"],
-                        pred_class=losses["pred_class"],
-                        loss=losses["total_loss"],
-                        logits=losses.get("supervised_logits"),
-                        centroid_radius_mm=centroid_radius_mm,
-                    )
-                )
+                yield {
+                    "event_idx": int(event_idx),
+                    "split_position": split_position[int(event_idx)],
+                    "view": losses["view"],
+                    "true_class": losses["true_class"],
+                    "pred_class": losses["pred_class"],
+                    "loss": losses["total_loss"],
+                    "logits": losses.get("supervised_logits"),
+                }
             continue
 
         views = event_views_from_indices(events, batch_indices, view_fn)
@@ -129,18 +124,15 @@ def collect_event_metrics(model, events, indices, view_fn, args, device):
                 event_logits = logits[row][mask]
                 pred_class = event_logits.argmax(dim=1)
                 loss = F.cross_entropy(event_logits, target) if target.numel() else None
-                records.append(
-                    _event_metric_record(
-                        event_idx=event_idx,
-                        split_position=split_position[int(event_idx)],
-                        view=view,
-                        true_class=target,
-                        pred_class=pred_class,
-                        loss=loss,
-                        logits=event_logits,
-                        centroid_radius_mm=centroid_radius_mm,
-                    )
-                )
+                yield {
+                    "event_idx": int(event_idx),
+                    "split_position": split_position[int(event_idx)],
+                    "view": view,
+                    "true_class": target,
+                    "pred_class": pred_class,
+                    "loss": loss,
+                    "logits": event_logits,
+                }
         elif hit_batch.kind == "graph":
             logits = model(hit_batch.x, batch=hit_batch.batch_index)
             for row, (event_idx, view) in enumerate(zip(batch_indices, views)):
@@ -149,18 +141,42 @@ def collect_event_metrics(model, events, indices, view_fn, args, device):
                 event_logits = logits[mask]
                 pred_class = event_logits.argmax(dim=1)
                 loss = F.cross_entropy(event_logits, target) if target.numel() else None
-                records.append(
-                    _event_metric_record(
-                        event_idx=event_idx,
-                        split_position=split_position[int(event_idx)],
-                        view=view,
-                        true_class=target,
-                        pred_class=pred_class,
-                        loss=loss,
-                        logits=event_logits,
-                        centroid_radius_mm=centroid_radius_mm,
-                    )
-                )
+                yield {
+                    "event_idx": int(event_idx),
+                    "split_position": split_position[int(event_idx)],
+                    "view": view,
+                    "true_class": target,
+                    "pred_class": pred_class,
+                    "loss": loss,
+                    "logits": event_logits,
+                }
         else:
             raise ValueError(f"Unsupported hit-classifier batch kind: {hit_batch.kind!r}.")
+
+
+@torch.no_grad()
+def collect_event_metrics(model, events, indices, view_fn, args, device):
+    """Collect hit-level accuracy summarized per event for a split."""
+    centroid_radius_mm = float(getattr(args, "event_diagnostic_radius_mm", 25.0))
+    records = []
+    for prediction in iter_event_predictions(
+        model,
+        events,
+        indices,
+        view_fn,
+        args,
+        device,
+    ):
+        records.append(
+            _event_metric_record(
+                event_idx=prediction["event_idx"],
+                split_position=prediction["split_position"],
+                view=prediction["view"],
+                true_class=prediction["true_class"],
+                pred_class=prediction["pred_class"],
+                loss=prediction["loss"],
+                logits=prediction["logits"],
+                centroid_radius_mm=centroid_radius_mm,
+            )
+        )
     return sorted(records, key=lambda record: record["split_position"])

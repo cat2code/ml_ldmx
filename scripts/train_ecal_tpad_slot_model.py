@@ -558,7 +558,7 @@ def main():
     events, event_sources, data_dir, root_files = load_events(args, logger)
     if len(events) < 20:
         raise ValueError(
-            f"Need at least 20 events for the existing 80/15/5 split; loaded {len(events)}."
+            f"Need at least 20 events for the 80/10/10 split; loaded {len(events)}."
         )
     splits = deterministic_split(len(events), args.seed)
     logger.info(

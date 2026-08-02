@@ -4,7 +4,7 @@ import torch
 def deterministic_split(num_events, seed, allow_small=False):
     if num_events < 20 and not allow_small:
         raise ValueError(
-            f"Need at least 20 events for an 80/15/5 split with a non-empty test set; got {num_events}."
+            f"Need at least 20 events for an 80/10/10 split with non-empty validation and test sets; got {num_events}."
         )
     if allow_small and num_events < 3:
         raise ValueError(
@@ -13,7 +13,7 @@ def deterministic_split(num_events, seed, allow_small=False):
     generator = torch.Generator().manual_seed(seed)
     indices = torch.randperm(num_events, generator=generator).tolist()
     n_train = int(0.80 * num_events)
-    n_val = max(1, int(0.15 * num_events))
+    n_val = max(1, int(0.10 * num_events))
     n_test = num_events - n_train - n_val
     if n_test == 0:
         n_train -= 1

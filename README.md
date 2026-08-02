@@ -111,7 +111,7 @@ python scripts/train_hit_classifier_baseline.py \
 ```
 
 The preprocessing options must match those recorded in the cache manifest.
-The trainer makes a deterministic 80/15/5 train/validation/test split, fits
+The trainer makes a deterministic 80/10/10 train/validation/test split, fits
 continuous-feature normalization only on the training split, and saves the
 complete run under `$RUN_DIR`. Use `--device cuda`, `mps`, or `cpu` to select
 a device explicitly.

@@ -947,19 +947,6 @@ def main():
         save_history(history, run_dir)
         plot_history(history, run_dir, title_prefix=args.model)
 
-        save_checkpoint(
-            run_dir / "checkpoints/latest.pt",
-            model,
-            optimizer,
-            scheduler,
-            epoch,
-            args,
-            history,
-            best_val_loss,
-            model_kwargs,
-            feature_norm,
-            splits,
-        )
         if val_metrics["val_loss"] < best_val_loss:
             best_val_loss = val_metrics["val_loss"]
             save_checkpoint(
@@ -975,6 +962,19 @@ def main():
                 feature_norm,
                 splits,
             )
+        save_checkpoint(
+            run_dir / "checkpoints/latest.pt",
+            model,
+            optimizer,
+            scheduler,
+            epoch,
+            args,
+            history,
+            best_val_loss,
+            model_kwargs,
+            feature_norm,
+            splits,
+        )
         if (epoch + 1) % args.checkpoint_every == 0:
             save_checkpoint(
                 run_dir / f"checkpoints/epoch_{epoch + 1:04d}.pt",

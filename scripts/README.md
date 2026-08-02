@@ -151,7 +151,7 @@ Before scaling, confirm in the Slurm log and run artifacts that:
 
 - CUDA is available and the resolved training device is `cuda`.
 - The resolved data directory is the intended production cache.
-- The loaded event count and 80/15/5 split sizes are correct.
+- The loaded event count and 80/10/10 split sizes are correct.
 - Both input transforms are `log1p` for the cache produced above.
 - Training and validation loss are finite, training loss decreases, and the
   predictions do not collapse to one class.
