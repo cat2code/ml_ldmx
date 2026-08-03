@@ -86,9 +86,10 @@ git pull --ff-only
 git status --short
 git rev-parse HEAD
 
-module purge
-module load GCCcore/13.2.0
-module load Python/3.11.5-GCCcore-13.2.0
+module --force purge
+module load SoftwareTree/Milan
+module load GCC/13.2.0
+module load Python/3.11.5
 
 if [[ ! -f .venv/bin/activate ]]; then
   python -m venv .venv
@@ -101,15 +102,19 @@ export VENV_DIR="$REPO_ROOT/.venv"
 mkdir -p outputs/slurm
 ```
 
-Use ordinary `module purge`, not `module --force purge`: forcing the purge can
-remove sticky site modules that make the COSMOS software hierarchy visible.
-If either module is unavailable, start a fresh SSH login and inspect the full
-hierarchy before continuing:
+The explicit `SoftwareTree/Milan` load is important. It restores the sticky
+root of the COSMOS software hierarchy after the forced purge; without it,
+GCC and Python can appear in Lmod's cache but remain unavailable. Verify the
+sequence before continuing:
 
 ```bash
-module spider GCCcore/13.2.0
-module spider Python/3.11.5-GCCcore-13.2.0
+module list
+python --version
+which python
 ```
+
+The expected interpreter is Python 3.11.5 under
+`/sw/easybuild_milan/software/Python/3.11.5-GCCcore-13.2.0/`.
 
 If more than one allocation is listed by `projinfo`, add the correct
 `--account=<project>` in the submission block below. Do not guess an account.
