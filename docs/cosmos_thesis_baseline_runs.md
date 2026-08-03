@@ -86,9 +86,9 @@ git pull --ff-only
 git status --short
 git rev-parse HEAD
 
-module --force purge
+module purge
 module load GCCcore/13.2.0
-module load Python/3.11.5
+module load Python/3.11.5-GCCcore-13.2.0
 
 if [[ ! -f .venv/bin/activate ]]; then
   python -m venv .venv
@@ -101,9 +101,15 @@ export VENV_DIR="$REPO_ROOT/.venv"
 mkdir -p outputs/slurm
 ```
 
-If `Python/3.11.5` is no longer an available short module name, inspect the
-current name with `module spider Python/3.11.5`; LUNARC also documents the
-fully qualified name `Python/3.11.5-GCCcore-13.2.0`.
+Use ordinary `module purge`, not `module --force purge`: forcing the purge can
+remove sticky site modules that make the COSMOS software hierarchy visible.
+If either module is unavailable, start a fresh SSH login and inspect the full
+hierarchy before continuing:
+
+```bash
+module spider GCCcore/13.2.0
+module spider Python/3.11.5-GCCcore-13.2.0
+```
 
 If more than one allocation is listed by `projinfo`, add the correct
 `--account=<project>` in the submission block below. Do not guess an account.

@@ -68,9 +68,9 @@ else
   RUN_NAME="${RUN_NAME:-${MODEL}_${EVENTS_PER_SOURCE}per_source_${SLURM_JOB_ID:-manual}}"
 fi
 
-module --force purge
+module purge
 module load GCCcore/13.2.0
-module load Python/3.11.5
+module load Python/3.11.5-GCCcore-13.2.0
 
 cd "${REPO_ROOT}"
 mkdir -p outputs/slurm "${OUTPUT_ROOT}"

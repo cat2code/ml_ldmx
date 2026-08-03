@@ -25,9 +25,9 @@ SPACE_DIMENSIONS="${SPACE_DIMENSIONS:-4}"
 PROPAGATE_DIMENSIONS="${PROPAGATE_DIMENSIONS:-32}"
 K="${K:-16}"
 
-module --force purge
+module purge
 module load GCCcore/13.2.0
-module load Python/3.11.5
+module load Python/3.11.5-GCCcore-13.2.0
 
 cd "${REPO_ROOT}"
 
