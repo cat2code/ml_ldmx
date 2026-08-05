@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from ml_ldmx.datasets.tensorize import (
@@ -75,21 +77,26 @@ def checkpoint_state(model, optimizer, scheduler, epoch, args, history, best_val
 
 def save_checkpoint(path, model, optimizer, scheduler, epoch, args, history, best_val_loss, model_kwargs, feature_norm, splits):
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        checkpoint_state(
-            model,
-            optimizer,
-            scheduler,
-            epoch,
-            args,
-            history,
-            best_val_loss,
-            model_kwargs,
-            feature_norm,
-            splits,
-        ),
-        path,
-    )
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        torch.save(
+            checkpoint_state(
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                args,
+                history,
+                best_val_loss,
+                model_kwargs,
+                feature_norm,
+                splits,
+            ),
+            temporary_path,
+        )
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def load_checkpoint(path, model, optimizer, scheduler, device):

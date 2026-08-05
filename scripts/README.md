@@ -131,13 +131,14 @@ the recommended mode for maintained model comparisons. Because `--export=ALL`
 forwards the submission shell, clear stale single-source or resume variables as
 shown before every new balanced run.
 
-The batch script defaults to `ECalTpadTransformer`, five epochs, batch size 8,
-learning rate `1e-3`, no weight decay, and seed 7. The explicit values in the
-example make the configuration traceable and the data split/training order
-repeatable; GPU kernels are not guaranteed to be bitwise deterministic. The
-directory name is also self-describing. Never reuse a `RUN_NAME` for an
-unrelated experiment; files in an existing run directory can be replaced or
-mixed. Reusing it is appropriate only when resuming that exact run.
+The batch script defaults to `ECalTpadTransformer`, at most 15 epochs with the
+early-stopping policy described below, batch size 8, learning rate `1e-3`, no
+weight decay, and seed 7. The explicit values in the example make the
+configuration traceable and the data split/training order repeatable; GPU
+kernels are not guaranteed to be bitwise deterministic. The directory name is
+also self-describing. Never reuse a `RUN_NAME` for an unrelated experiment;
+files in an existing run directory can be replaced or mixed. Reusing it is
+appropriate only when resuming that exact run.
 
 Monitor the job with:
 
@@ -209,7 +210,10 @@ Override batch settings through `sbatch --export=ALL,NAME=value,...`:
 | `EVENTS_PER_SOURCE` | `500` | Events selected from each active source |
 | `SOURCE_LABEL` | empty | Balanced sources; set to `2e` or `3e` for one source |
 | `ELECTRON_COUNT` | inferred | Electron count for a selected single source |
-| `EPOCHS` | `5` | Total target epoch count |
+| `EPOCHS` | `15` | Maximum total epoch count |
+| `EARLY_STOPPING_MIN_EPOCHS` | `5` | Minimum completed epochs before automatic stopping |
+| `EARLY_STOPPING_PATIENCE` | `3` | Epochs without significant validation-loss improvement; `0` disables |
+| `EARLY_STOPPING_MIN_DELTA` | `1e-4` | Validation-loss decrease that resets patience |
 | `BATCH_SIZE` | `8` | Events per optimizer step |
 | `LR` | `1e-3` | AdamW learning rate |
 | `WEIGHT_DECAY` | `0.0` | AdamW weight decay |
@@ -223,6 +227,27 @@ Override batch settings through `sbatch --export=ALL,NAME=value,...`:
 | `TPAD_PE_TRANSFORM` | `log1p` | Expected TPad transform recorded by the cache |
 | `OUTPUT_ROOT` | `outputs/cosmos_baselines` | Parent directory for run artifacts |
 | `RUN_NAME` | generated | Run directory name |
+
+### Four-run 100k report campaign
+
+Submit the agreed independent `2e`/`3e` Transformer and GravNet runs with:
+
+```bash
+bash scripts/submit_cosmos_baseline_100k_campaign.sh
+```
+
+The launcher performs a read-only cache/configuration validation before any
+submission, refuses a dirty checkout or an existing campaign output directory,
+then submits four independent jobs. It records the frozen Git commit and
+campaign settings in `campaign_manifest.txt` and writes each accepted Slurm ID
+immediately to `submitted_jobs.tsv`. It deliberately uses no job dependency:
+each training wrapper performs its own CUDA/import checks, and one failed job
+cannot leave the other jobs permanently blocked.
+
+Set `DRY_RUN=1` to print all four `sbatch` commands without submitting. Set an
+explicit `CAMPAIGN` to choose the campaign directory name, or leave it unset
+for a timestamped name. `SBATCH_ACCOUNT` is optional and is forwarded only
+when set.
 | `RESUME` | empty | Compatible `latest.pt` checkpoint to resume |
 
 For Transformer models, `HIDDEN_DIM` must be divisible by `NUM_HEADS`. GravNet
@@ -302,10 +327,16 @@ in-memory model, which may not be `best.pt`; regenerate validation and test
 diagnostics from `best.pt` with `inspect_hit_classifier_run.py` before quoting
 final results. Do not choose hyperparameters using the test split.
 
-The trainer runs the complete `EPOCHS` budget; it does not stop early when
-validation loss stops improving. The batch wrapper also leaves the trainer's
-default per-epoch checkpointing enabled, so include periodic checkpoints in
-the output-storage estimate for a long run.
+The trainer stops after at most `EPOCHS`. By default it completes at least five
+epochs, then stops after three epochs without a validation-loss improvement of
+at least `1e-4`. The batch wrapper leaves per-epoch checkpointing enabled, so
+include periodic checkpoints in the output-storage estimate for a long run.
+
+For a graceful manual stop, create `STOP_AFTER_EPOCH` in the run directory.
+The trainer finishes the active epoch, saves its checkpoints, consumes the
+marker, performs final validation/test analysis, and exits normally. A plain
+`scancel JOB_ID` stops immediately; the active epoch and final analysis are
+lost, but checkpoints from completed epochs remain usable.
 
 ### Resume an interrupted run
 

@@ -48,6 +48,7 @@ from ml_ldmx.train.checkpoints import (
     require_matching_hard_origin_target_rule,
     save_checkpoint,
 )
+from ml_ldmx.train.early_stopping import early_stopping_state_from_history
 from ml_ldmx.train.hit_classifier_baseline import compute_event_losses, train_one_epoch
 from ml_ldmx.train.logging import setup_logging
 from ml_ldmx.train.modeling import count_trainable_parameters
@@ -148,7 +149,25 @@ def parse_args():
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--run-name", default=None)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument(
+        "--early-stopping-min-epochs",
+        type=int,
+        default=5,
+        help="Do not stop automatically before this many total completed epochs.",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop after this many epochs without a significant validation-loss improvement; 0 disables.",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=1e-4,
+        help="Minimum validation-loss decrease that resets early-stopping patience.",
+    )
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
@@ -243,6 +262,14 @@ def parse_args():
 def validate_args(args):
     if args.events_per_class <= 0 or args.epochs <= 0 or args.batch_size <= 0:
         raise ValueError("--events-per-class, --epochs, and --batch-size must be positive.")
+    if args.early_stopping_min_epochs <= 0:
+        raise ValueError("--early-stopping-min-epochs must be positive.")
+    if args.early_stopping_min_epochs > args.epochs:
+        raise ValueError("--early-stopping-min-epochs cannot exceed --epochs.")
+    if args.early_stopping_patience < 0:
+        raise ValueError("--early-stopping-patience must be non-negative.")
+    if args.early_stopping_min_delta < 0:
+        raise ValueError("--early-stopping-min-delta must be non-negative.")
     if args.max_events is not None and args.max_events <= 0:
         raise ValueError("--max-events must be positive when provided.")
     for name in ("max_cache_root_files", "max_events_per_root_file", "shard_cache_size", "events_per_source"):
@@ -810,12 +837,21 @@ def main():
     validate_args(args)
     run_dir = resolve_run_dir(args)
     logger = setup_logging(run_dir, logger_name="hit_classifier_baseline")
+    stop_after_epoch_path = run_dir / "STOP_AFTER_EPOCH"
     torch.manual_seed(args.seed)
 
     device = resolve_device(args.device, logger)
     logger.info("Output directory: %s", run_dir)
     logger.info("Model: %s", args.model)
     logger.info("Using device: %s", device)
+    logger.info(
+        "Early stopping: max_epochs=%s min_epochs=%s patience=%s min_delta=%s",
+        args.epochs,
+        args.early_stopping_min_epochs,
+        args.early_stopping_patience,
+        args.early_stopping_min_delta,
+    )
+    logger.info("Graceful manual-stop marker: %s", stop_after_epoch_path)
     logger.info(
         "Target mode: canonical-y; hard-origin target rule: %s; "
         "baseline training noise policy: filtered",
@@ -916,6 +952,11 @@ def main():
     log_run_overview(logger, run_overview, run_overview_paths)
     save_history(history, run_dir)
 
+    early_stopping_state = early_stopping_state_from_history(
+        history,
+        min_delta=args.early_stopping_min_delta,
+    )
+    stop_reason = "max_epochs"
     for epoch in range(start_epoch, args.epochs):
         epoch_metrics = {"epoch": epoch + 1, "lr": optimizer.param_groups[0]["lr"]}
         epoch_metrics.update(
@@ -943,6 +984,12 @@ def main():
         )
         val_metrics["val_elapsed_sec"] = time.time() - val_start
         epoch_metrics.update(val_metrics)
+        early_stopping_state, significant_improvement = early_stopping_state.update(
+            val_metrics["val_loss"],
+            min_delta=args.early_stopping_min_delta,
+        )
+        epoch_metrics["early_stopping_significant_improvement"] = significant_improvement
+        epoch_metrics["early_stopping_bad_epochs"] = early_stopping_state.bad_epochs
         history.append(epoch_metrics)
         save_history(history, run_dir)
         plot_history(history, run_dir, title_prefix=args.model)
@@ -990,11 +1037,34 @@ def main():
                 splits,
             )
         logger.info(
-            "epoch=%03d val_loss=%.5f val_acc=%.4f",
+            "epoch=%03d val_loss=%.5f val_acc=%.4f early_stop_bad_epochs=%s",
             epoch + 1,
             val_metrics["val_loss"],
             val_metrics["val_accuracy"],
+            early_stopping_state.bad_epochs,
         )
+        if stop_after_epoch_path.exists():
+            stop_reason = "manual_stop_after_epoch"
+            stop_after_epoch_path.unlink(missing_ok=True)
+            logger.info(
+                "Graceful manual stop requested; epoch %s is checkpointed and final evaluation will run.",
+                epoch + 1,
+            )
+            break
+        if early_stopping_state.should_stop(
+            completed_epochs=epoch + 1,
+            min_epochs=args.early_stopping_min_epochs,
+            patience=args.early_stopping_patience,
+        ):
+            stop_reason = "early_stopping"
+            logger.info(
+                "Early stopping after epoch %s: no validation-loss improvement of at least %s "
+                "for %s epoch(s).",
+                epoch + 1,
+                args.early_stopping_min_delta,
+                early_stopping_state.bad_epochs,
+            )
+            break
 
     val_event_records = collect_event_metrics(
         model,
@@ -1081,7 +1151,12 @@ def main():
         device,
         "test",
     )
-    final_metrics = {"best_val_loss": best_val_loss, **test_metrics}
+    final_metrics = {
+        "best_val_loss": best_val_loss,
+        "completed_epochs": len(history),
+        "stop_reason": stop_reason,
+        **test_metrics,
+    }
     save_json(run_dir / "final_metrics.json", final_metrics)
     plot_confusion_matrix(
         test_metrics["test_confusion"],

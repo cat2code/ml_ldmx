@@ -1,5 +1,10 @@
 # COSMOS thesis baseline night runbook
 
+> **Historical runbook:** the eight-job, high-capacity submission block below
+> is retained as an earlier scaling proposal and must not be used for the
+> current report campaign. The maintained four-job 100k launcher is
+> `scripts/submit_cosmos_baseline_100k_campaign.sh`; see `scripts/README.md`.
+
 This launches **eight independent jobs**: two architectures, two source
 multiplicities, and two dataset sizes. The phrase `100 000 k` is interpreted
 here as **100,000 events**, not 100 million.

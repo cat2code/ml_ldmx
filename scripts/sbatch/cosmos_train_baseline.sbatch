@@ -5,7 +5,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH -t 12:00:00
+#SBATCH -t 72:00:00
 #SBATCH --no-requeue
 #SBATCH -o outputs/slurm/%x_%j.out
 #SBATCH -e outputs/slurm/%x_%j.err
@@ -19,7 +19,10 @@ MODEL="${MODEL:-ECalTpadTransformer}"
 SOURCE_LABEL="${SOURCE_LABEL:-}"              # leave empty for balanced 2e+3e; set to 2e or 3e for one source
 ELECTRON_COUNT="${ELECTRON_COUNT:-}"          # inferred from SOURCE_LABEL when omitted
 EVENTS_PER_SOURCE="${EVENTS_PER_SOURCE:-500}" # total events = sources * this value
-EPOCHS="${EPOCHS:-5}"
+EPOCHS="${EPOCHS:-15}"
+EARLY_STOPPING_MIN_EPOCHS="${EARLY_STOPPING_MIN_EPOCHS:-5}"
+EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-3}"
+EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-1e-4}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 LR="${LR:-1e-3}"
 WEIGHT_DECAY="${WEIGHT_DECAY:-0.0}"
@@ -155,6 +158,9 @@ cmd=(
   --model "${MODEL}"
   --events-per-source "${EVENTS_PER_SOURCE}"
   --epochs "${EPOCHS}"
+  --early-stopping-min-epochs "${EARLY_STOPPING_MIN_EPOCHS}"
+  --early-stopping-patience "${EARLY_STOPPING_PATIENCE}"
+  --early-stopping-min-delta "${EARLY_STOPPING_MIN_DELTA}"
   --batch-size "${BATCH_SIZE}"
   --lr "${LR}"
   --weight-decay "${WEIGHT_DECAY}"

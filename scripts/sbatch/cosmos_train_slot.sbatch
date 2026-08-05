@@ -5,7 +5,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH -t 12:00:00
+#SBATCH -t 72:00:00
 #SBATCH -o outputs/slurm/%x_%j.out
 #SBATCH -e outputs/slurm/%x_%j.err
 
