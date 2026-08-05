@@ -10,7 +10,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from inspect_hit_classifier_run import _training_args
+from inspect_hit_classifier_run import _training_args, restore_model
 from ml_ldmx.datasets.ecal_tpad_shards import (
     _cache_spec,
     _cache_specs_compatible_for_loading,
@@ -20,6 +20,7 @@ from ml_ldmx.datasets.tensorize import (
     DOMINANT_ORIGIN_TARGET_RULE,
     LEGACY_DOMINANT_ORIGIN_TARGET_RULE,
 )
+from ml_ldmx.models import ECalGravNet
 from ml_ldmx.train.checkpoints import (
     checkpoint_hard_origin_target_rule,
     checkpoint_state,
@@ -44,6 +45,35 @@ def _inspection_args():
 
 
 class TargetPolicyMetadataTest(unittest.TestCase):
+    def test_inspector_restores_legacy_gravnet_without_batch_normalization(self):
+        legacy_kwargs = {
+            "in_dim": 3,
+            "hidden_dim": 4,
+            "out_dim": 3,
+            "num_layers": 1,
+            "space_dimensions": 2,
+            "propagate_dimensions": 4,
+            "k": 2,
+            "dropout": 0.0,
+        }
+        try:
+            legacy_model = ECalGravNet(**legacy_kwargs, normalization="none")
+        except Exception as exc:
+            self.skipTest(f"GravNetConv runtime unavailable in this environment: {exc}")
+        checkpoint = {
+            "model_kwargs": legacy_kwargs,
+            "model_state_dict": legacy_model.state_dict(),
+        }
+
+        restored, _view = restore_model(
+            checkpoint,
+            SimpleNamespace(model="ECalGravNet"),
+            torch.device("cpu"),
+        )
+
+        self.assertEqual(restored.normalization, "none")
+        self.assertTrue(all(isinstance(norm, torch.nn.Identity) for norm in restored.norms))
+
     def test_old_checkpoint_defaults_to_legacy_rule(self):
         checkpoint = {"args": {}}
 

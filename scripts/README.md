@@ -64,8 +64,15 @@ data split:
 
 - `ECalTransformer`: ECal hits only.
 - `ECalTpadTransformer`: ECal hits with TPad context.
-- `ECalGravNet`: ECal hits only, using GravNet layers.
-- `ECalTpadGravNet`: ECal hits with TPad context and GravNet layers.
+- `ECalGravNet`: ECal hits only, using residual GravNet layers with BatchNorm
+  after every block.
+- `ECalTpadGravNet`: ECal hits with TPad context and residual GravNet layers
+  with BatchNorm after every block.
+
+BatchNorm is intrinsic to the maintained GravNet architecture, just as
+LayerNorm is intrinsic to the Transformer encoder. Older GravNet checkpoints
+without normalization are detected from their saved constructor metadata and
+reconstructed with the legacy architecture.
 
 The normal comparison dataset contains balanced `2e` and `3e` sources. Noise
 hits are filtered, continuous features are normalized using the training split
@@ -227,6 +234,7 @@ Override batch settings through `sbatch --export=ALL,NAME=value,...`:
 | `TPAD_PE_TRANSFORM` | `log1p` | Expected TPad transform recorded by the cache |
 | `OUTPUT_ROOT` | `outputs/cosmos_baselines` | Parent directory for run artifacts |
 | `RUN_NAME` | generated | Run directory name |
+| `RESUME` | empty | Compatible `latest.pt` checkpoint to resume |
 
 ### Four-run 100k report campaign
 
@@ -248,7 +256,29 @@ Set `DRY_RUN=1` to print all four `sbatch` commands without submitting. Set an
 explicit `CAMPAIGN` to choose the campaign directory name, or leave it unset
 for a timestamped name. `SBATCH_ACCOUNT` is optional and is forwarded only
 when set.
-| `RESUME` | empty | Compatible `latest.pt` checkpoint to resume |
+
+### Experimental 100k slot-model campaign
+
+Submit the maintained multi-task slot model on 50,000 `2e` plus 50,000 `3e`
+events with explicit noise/background supervision using:
+
+```bash
+bash scripts/submit_cosmos_slot_100k_campaign.sh
+```
+
+The launcher validates both finalized cache manifests and one stored event per
+source before submission. The Slurm job then runs a complete 100-event
+forward/backward/checkpoint preflight with the production architecture; the
+100,000-event run starts in the same allocation only if that preflight exits
+successfully. The production model uses hidden width 192, three transformer
+layers, eight heads, dropout 0.1, AdamW with learning rate `3e-4` and weight
+decay `1e-4`, and a maximum of 15 epochs. Early stopping cannot occur before
+five epochs and uses patience 3 with minimum validation-loss change `1e-4`.
+
+The wrapper saves `best.pt`, `latest.pt`, and per-epoch checkpoints. To request
+a clean stop after the current epoch, create an empty `STOP_AFTER_EPOCH` file
+in the production run directory; evaluation and final artifact writing then
+run normally.
 
 For Transformer models, `HIDDEN_DIM` must be divisible by `NUM_HEADS`. GravNet
 models require the compiled PyTorch Geometric `torch-cluster` dependency;

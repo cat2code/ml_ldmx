@@ -3,11 +3,13 @@ Train the ECal/TPAD slot-validity multi-task model.
 
 Example from the repository root:
 
-    python scripts/train_ecal_tpad_slot_model.py --events-per-class 10 --epochs 2 --device cpu
+    python scripts/train_ecal_tpad_slot_model.py --events-per-class 10 --epochs 2 \
+      --early-stopping-min-epochs 1 --device cpu
 
 Example from the ml_ldmx directory:
 
-    pip install -e .; python scripts/train_ecal_tpad_slot_model.py --events-per-class 10 --epochs 2
+    pip install -e .; python scripts/train_ecal_tpad_slot_model.py --events-per-class 10 \
+      --epochs 2 --early-stopping-min-epochs 1
 """
 
 import argparse
@@ -51,6 +53,7 @@ from ml_ldmx.train.checkpoints import (
 )
 from ml_ldmx.train.ecal_tpad_slot_model import train_one_epoch
 from ml_ldmx.train.ecal_tpad_slot_model import ecal_mask_from_event
+from ml_ldmx.train.early_stopping import early_stopping_state_from_history
 from ml_ldmx.train.logging import setup_logging
 from ml_ldmx.train.modeling import count_trainable_parameters
 from ml_ldmx.train.paths import resolve_existing_path, resolve_run_dir
@@ -116,7 +119,25 @@ def parse_args():
         default=None,
         help="Subdirectory name under --output-root. Defaults to a timestamped run name.",
     )
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument(
+        "--early-stopping-min-epochs",
+        type=int,
+        default=5,
+        help="Do not stop automatically before this many total completed epochs.",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop after this many epochs without a significant validation-loss improvement; 0 disables.",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=1e-4,
+        help="Minimum validation-loss decrease that resets early-stopping patience.",
+    )
     parser.add_argument("--batch-size", type=int, default=8, help="Number of events per optimizer step.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
@@ -343,6 +364,14 @@ def validate_args(args):
         raise ValueError("Use only one of --processed-cache, --processed-cache-root, or --processed-source.")
     if args.epochs <= 0:
         raise ValueError("--epochs must be positive.")
+    if args.early_stopping_min_epochs <= 0:
+        raise ValueError("--early-stopping-min-epochs must be positive.")
+    if args.early_stopping_min_epochs > args.epochs:
+        raise ValueError("--early-stopping-min-epochs cannot exceed --epochs.")
+    if args.early_stopping_patience < 0:
+        raise ValueError("--early-stopping-patience must be non-negative.")
+    if args.early_stopping_min_delta < 0:
+        raise ValueError("--early-stopping-min-delta must be non-negative.")
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive.")
     if args.checkpoint_every <= 0:
@@ -385,6 +414,31 @@ def processed_sources_from_args(args):
         (int(electron_count), label, resolve_project_path(cache_dir))
         for electron_count, label, cache_dir in (args.processed_source or [])
     ]
+
+
+def require_explicit_noise_targets(events):
+    """Fail early if a sharded cache cannot support background supervision."""
+    if isinstance(events, MultiShardedECalTpadDataset):
+        source_datasets = [source["dataset"] for source in events.sources]
+    elif isinstance(events, ShardedECalTpadDataset):
+        source_datasets = [events]
+    else:
+        return
+
+    for dataset in source_datasets:
+        spec = dataset.metadata.get("cache_spec", {})
+        if spec.get("filter_noise") is not False or spec.get("supervise_noise") is not True:
+            raise ValueError(
+                "--supervise-noise requires shards created with filter_noise=false and "
+                f"supervise_noise=true; incompatible cache: {dataset.cache_dir}"
+            )
+        sample = dataset[0]
+        noise_target = sample.get("is_noise_target")
+        if noise_target is None or noise_target.shape != sample["physical_y"].shape:
+            raise ValueError(
+                "--supervise-noise requires an is_noise_target value aligned with every "
+                f"ECal target; incompatible cache: {dataset.cache_dir}"
+            )
 
 
 def prepare_targets_and_features(events, splits, args, logger):
@@ -556,6 +610,8 @@ def main():
         logger.info("Noise handling: filtering noise hits at training access time; background class receives no hit supervision")
 
     events, event_sources, data_dir, root_files = load_events(args, logger)
+    if args.supervise_noise:
+        require_explicit_noise_targets(events)
     if len(events) < 20:
         raise ValueError(
             f"Need at least 20 events for the 80/10/10 split; loaded {len(events)}."
@@ -569,6 +625,13 @@ def main():
     )
     logger.info("Target mode: %s", args.target_mode)
     logger.info("Hard-origin target rule: %s", args.hard_origin_target_rule)
+    logger.info(
+        "Early stopping: max_epochs=%s min_epochs=%s patience=%s min_delta=%s",
+        args.epochs,
+        args.early_stopping_min_epochs,
+        args.early_stopping_patience,
+        args.early_stopping_min_delta,
+    )
     feature_norm = prepare_targets_and_features(events, splits, args, logger)
     if args.supervise_noise:
         num_noise = sum(int(event["is_noise_target"].sum().item()) for event in events)
@@ -630,7 +693,14 @@ def main():
     )
     save_history(history, run_dir)
 
+    early_stopping_state = early_stopping_state_from_history(
+        history,
+        min_delta=args.early_stopping_min_delta,
+    )
+    stop_after_epoch_path = run_dir / "STOP_AFTER_EPOCH"
+    logger.info("Graceful manual-stop marker: %s", stop_after_epoch_path)
     interrupted = False
+    stop_reason = "max_epochs"
     try:
         for epoch in range(start_epoch, args.epochs):
             lr = optimizer.param_groups[0]["lr"]
@@ -653,6 +723,12 @@ def main():
             val_metrics["val_elapsed_sec"] = time.time() - val_start
             epoch_metrics.update(train_metrics)
             epoch_metrics.update(val_metrics)
+            early_stopping_state, significant_improvement = early_stopping_state.update(
+                val_metrics["val_loss"],
+                min_delta=args.early_stopping_min_delta,
+            )
+            epoch_metrics["early_stopping_significant_improvement"] = significant_improvement
+            epoch_metrics["early_stopping_bad_epochs"] = early_stopping_state.bad_epochs
             history.append(epoch_metrics)
 
             logger.info(
@@ -669,20 +745,6 @@ def main():
 
             save_history(history, run_dir)
             plot_history(history, run_dir)
-
-            save_checkpoint(
-                run_dir / "checkpoints/latest.pt",
-                model,
-                optimizer,
-                scheduler,
-                epoch,
-                args,
-                history,
-                best_val_loss,
-                model_kwargs,
-                feature_norm,
-                splits,
-            )
 
             if val_metrics["val_loss"] < best_val_loss:
                 best_val_loss = val_metrics["val_loss"]
@@ -701,6 +763,20 @@ def main():
                 )
                 logger.info("Saved new best checkpoint with val_loss=%.5f", best_val_loss)
 
+            save_checkpoint(
+                run_dir / "checkpoints/latest.pt",
+                model,
+                optimizer,
+                scheduler,
+                epoch,
+                args,
+                history,
+                best_val_loss,
+                model_kwargs,
+                feature_norm,
+                splits,
+            )
+
             if (epoch + 1) % args.checkpoint_every == 0:
                 save_checkpoint(
                     run_dir / f"checkpoints/epoch_{epoch + 1:04d}.pt",
@@ -716,8 +792,32 @@ def main():
                     splits,
                 )
 
+            if stop_after_epoch_path.exists():
+                stop_reason = "manual_stop_after_epoch"
+                stop_after_epoch_path.unlink(missing_ok=True)
+                logger.info(
+                    "Graceful manual stop requested; epoch %s is checkpointed and final evaluation will run.",
+                    epoch + 1,
+                )
+                break
+            if early_stopping_state.should_stop(
+                completed_epochs=epoch + 1,
+                min_epochs=args.early_stopping_min_epochs,
+                patience=args.early_stopping_patience,
+            ):
+                stop_reason = "early_stopping"
+                logger.info(
+                    "Early stopping after epoch %s: no validation-loss improvement of at least %s "
+                    "for %s epoch(s).",
+                    epoch + 1,
+                    args.early_stopping_min_delta,
+                    early_stopping_state.bad_epochs,
+                )
+                break
+
     except KeyboardInterrupt:
         interrupted = True
+        stop_reason = "keyboard_interrupt"
         logger.warning("KeyboardInterrupt received; saving partial run artifacts.")
         save_checkpoint(
             run_dir / "checkpoints/interrupted_latest.pt",
@@ -759,6 +859,8 @@ def main():
             )
             final_metrics = {
                 "interrupted": interrupted,
+                "stop_reason": stop_reason,
+                "completed_epochs": len(history),
                 "best_val_loss": best_val_loss,
                 **val_metrics,
                 **test_metrics,

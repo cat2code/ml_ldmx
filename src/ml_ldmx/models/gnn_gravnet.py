@@ -6,7 +6,12 @@ from torch_geometric.nn import GravNetConv
 
 
 class _GravNetHitClassifier(nn.Module):
-    """Per-node classifier whose neighborhoods are learned by GravNetConv."""
+    """Per-node classifier whose neighborhoods are learned by GravNetConv.
+
+    Batch normalization is part of the maintained GravNet block.  The
+    ``normalization="none"`` compatibility path exists so checkpoints written
+    before normalization was introduced can still be reconstructed exactly.
+    """
 
     def __init__(
         self,
@@ -18,15 +23,19 @@ class _GravNetHitClassifier(nn.Module):
         propagate_dimensions: int = 32,
         k: int = 16,
         dropout: float = 0.0,
+        normalization: str = "batchnorm",
     ):
         super().__init__()
         if in_dim <= 0 or hidden_dim <= 0 or out_dim <= 0:
             raise ValueError("in_dim, hidden_dim, and out_dim must be positive.")
         if num_layers <= 0 or space_dimensions <= 0 or propagate_dimensions <= 0 or k <= 0:
             raise ValueError("num_layers, space_dimensions, propagate_dimensions, and k must be positive.")
+        if normalization not in ("batchnorm", "none"):
+            raise ValueError("normalization must be 'batchnorm' or 'none'.")
 
         self.in_dim = in_dim
         self.out_dim = out_dim
+        self.normalization = normalization
         self.input_proj = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
@@ -40,6 +49,14 @@ class _GravNetHitClassifier(nn.Module):
                     propagate_dimensions=propagate_dimensions,
                     k=k,
                 )
+                for _ in range(num_layers)
+            ]
+        )
+        self.norms = nn.ModuleList(
+            [
+                nn.BatchNorm1d(hidden_dim)
+                if normalization == "batchnorm"
+                else nn.Identity()
                 for _ in range(num_layers)
             ]
         )
@@ -63,8 +80,9 @@ class _GravNetHitClassifier(nn.Module):
             raise ValueError(f"Expected batch with shape [{x.shape[0]}], got {tuple(batch.shape)}.")
 
         h = self.input_proj(x)
-        for conv in self.convs:
-            h = h + self.dropout(torch.relu(conv(h, batch=batch)))
+        for conv, norm in zip(self.convs, self.norms):
+            update = self.dropout(torch.relu(conv(h, batch=batch)))
+            h = norm(h + update)
         return self.head(h)
 
 

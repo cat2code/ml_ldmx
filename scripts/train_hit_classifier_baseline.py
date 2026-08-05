@@ -44,8 +44,9 @@ from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
 from ml_ldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
 from ml_ldmx.train.checkpoints import (
-    load_checkpoint,
+    read_checkpoint,
     require_matching_hard_origin_target_rule,
+    restore_checkpoint,
     save_checkpoint,
 )
 from ml_ldmx.train.early_stopping import early_stopping_state_from_history
@@ -447,7 +448,7 @@ def prepare_targets_and_features(events, splits, args, logger):
     return None
 
 
-def model_and_view(args, input_dim):
+def model_and_view(args, input_dim, gravnet_normalization="batchnorm"):
     out_dim = len(args.valid_labels)
     if args.model == "ECalGravNet":
         return (
@@ -460,6 +461,7 @@ def model_and_view(args, input_dim):
                 propagate_dimensions=args.propagate_dimensions,
                 k=args.k,
                 dropout=args.dropout,
+                normalization=gravnet_normalization,
             ),
             ecal_gravnet_view,
         )
@@ -474,6 +476,7 @@ def model_and_view(args, input_dim):
                 propagate_dimensions=args.propagate_dimensions,
                 k=args.k,
                 dropout=args.dropout,
+                normalization=gravnet_normalization,
             ),
             ecal_tpad_gravnet_view,
         )
@@ -491,7 +494,7 @@ def model_and_view(args, input_dim):
     return ECalTpadTransformer(**transformer_kwargs), ecal_tpad_transformer_view
 
 
-def model_kwargs_from_args(args, input_dim):
+def model_kwargs_from_args(args, input_dim, gravnet_normalization="batchnorm"):
     if "GravNet" in args.model:
         return {
             "in_dim": input_dim,
@@ -502,6 +505,7 @@ def model_kwargs_from_args(args, input_dim):
             "propagate_dimensions": args.propagate_dimensions,
             "k": args.k,
             "dropout": args.dropout,
+            "normalization": gravnet_normalization,
         }
     return {
         "in_dim": input_dim,
@@ -880,9 +884,35 @@ def main():
         "ECalTpadTransformer": ecal_tpad_transformer_view,
     }[args.model](events[0])
     input_dim = int(prototype_view["x"].shape[1])
-    model, view_fn = model_and_view(args, input_dim)
+    resume_checkpoint = None
+    gravnet_normalization = "batchnorm"
+    if args.resume is not None:
+        resume_checkpoint = read_checkpoint(args.resume, device)
+        if resume_checkpoint.get("splits") is not None and resume_checkpoint["splits"] != splits:
+            raise ValueError("Checkpoint split does not match the current deterministic split.")
+        checkpoint_args = resume_checkpoint.get("args", {})
+        if checkpoint_args.get("model") not in (None, args.model):
+            raise ValueError("Checkpoint model does not match --model.")
+        if checkpoint_args.get("target_mode") not in (None, args.target_mode):
+            raise ValueError("Checkpoint target mode does not match --target-mode.")
+        require_matching_hard_origin_target_rule(
+            resume_checkpoint,
+            args.hard_origin_target_rule,
+        )
+        if "GravNet" in args.model:
+            checkpoint_model_kwargs = resume_checkpoint.get("model_kwargs") or {}
+            gravnet_normalization = checkpoint_model_kwargs.get("normalization", "none")
+            logger.info(
+                "Resuming GravNet checkpoint with normalization=%s.",
+                gravnet_normalization,
+            )
+
+    model, view_fn = model_and_view(args, input_dim, gravnet_normalization)
     model = model.to(device)
-    model_kwargs = model_kwargs_from_args(args, input_dim)
+    model_kwargs = model_kwargs_from_args(args, input_dim, gravnet_normalization)
+    if "GravNet" in args.model:
+        args.gravnet_normalization = gravnet_normalization
+        logger.info("GravNet block normalization: %s", gravnet_normalization)
     logger.info("Input feature dimension: %s", input_dim)
     training_events, training_view_fn, view_cache_info = prepare_training_views(
         events,
@@ -897,22 +927,11 @@ def main():
     history = []
     best_val_loss = float("inf")
     start_epoch = 0
-    if args.resume is not None:
-        checkpoint = load_checkpoint(args.resume, model, optimizer, scheduler, device)
-        if checkpoint.get("splits") is not None and checkpoint["splits"] != splits:
-            raise ValueError("Checkpoint split does not match the current deterministic split.")
-        checkpoint_args = checkpoint.get("args", {})
-        if checkpoint_args.get("model") not in (None, args.model):
-            raise ValueError("Checkpoint model does not match --model.")
-        if checkpoint_args.get("target_mode") not in (None, args.target_mode):
-            raise ValueError("Checkpoint target mode does not match --target-mode.")
-        require_matching_hard_origin_target_rule(
-            checkpoint,
-            args.hard_origin_target_rule,
-        )
-        history = checkpoint.get("history", [])
-        best_val_loss = checkpoint.get("best_val_loss", float("inf"))
-        start_epoch = int(checkpoint["epoch"]) + 1
+    if resume_checkpoint is not None:
+        restore_checkpoint(resume_checkpoint, model, optimizer, scheduler)
+        history = resume_checkpoint.get("history", [])
+        best_val_loss = resume_checkpoint.get("best_val_loss", float("inf"))
+        start_epoch = int(resume_checkpoint["epoch"]) + 1
 
     target_order_counts_by_split = {
         name: target_order_counts(events, indices)

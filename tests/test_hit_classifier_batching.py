@@ -20,6 +20,53 @@ def _view(x, ecal_mask, y):
 
 
 class HitClassifierBatchingTest(unittest.TestCase):
+    def test_gravnet_uses_batch_normalization_by_default(self):
+        try:
+            model = ECalGravNet(
+                in_dim=3,
+                hidden_dim=4,
+                out_dim=3,
+                num_layers=2,
+                space_dimensions=2,
+                propagate_dimensions=4,
+                k=2,
+                dropout=0.0,
+            )
+        except Exception as exc:
+            self.skipTest(f"GravNetConv runtime unavailable in this environment: {exc}")
+
+        self.assertEqual(model.normalization, "batchnorm")
+        self.assertTrue(all(isinstance(norm, torch.nn.BatchNorm1d) for norm in model.norms))
+
+        model.train()
+        x = torch.randn(8, 3)
+        batch_index = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1])
+        try:
+            model(x, batch=batch_index).sum().backward()
+        except Exception as exc:
+            self.skipTest(f"GravNetConv runtime unavailable in this environment: {exc}")
+        self.assertTrue(all(int(norm.num_batches_tracked.item()) == 1 for norm in model.norms))
+
+    def test_gravnet_can_reconstruct_legacy_unnormalized_architecture(self):
+        try:
+            model = ECalGravNet(
+                in_dim=3,
+                hidden_dim=4,
+                out_dim=3,
+                num_layers=2,
+                space_dimensions=2,
+                propagate_dimensions=4,
+                k=2,
+                dropout=0.0,
+                normalization="none",
+            )
+        except Exception as exc:
+            self.skipTest(f"GravNetConv runtime unavailable in this environment: {exc}")
+
+        self.assertEqual(model.normalization, "none")
+        self.assertTrue(all(isinstance(norm, torch.nn.Identity) for norm in model.norms))
+        self.assertFalse(any(key.startswith("norms.") for key in model.state_dict()))
+
     def test_transformer_collate_pads_and_expands_ecal_targets(self):
         views = [
             _view(

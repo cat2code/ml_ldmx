@@ -122,6 +122,18 @@ sbatch --export=ALL,EVENTS_PER_SOURCE=500,EPOCHS=5,SUPERVISE_NOISE=1,RUN_NAME=sl
   scripts/sbatch/cosmos_train_slot.sbatch
 ```
 
+For the report-scale experimental run, use the guarded launcher:
+
+```bash
+bash scripts/submit_cosmos_slot_100k_campaign.sh
+```
+
+It selects 50,000 events from each source (100,000 total), validates that both
+caches retain explicit noise targets, and runs a 100-event end-to-end preflight
+inside the allocation before starting production training. The production
+budget is 15 epochs with a five-epoch minimum and validation-loss early
+stopping.
+
 ## Hyperparameters
 
 The batch scripts expose the main choices as environment variables:

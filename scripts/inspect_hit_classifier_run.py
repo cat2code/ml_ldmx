@@ -329,6 +329,11 @@ def restore_model(checkpoint, args, device):
     model_kwargs = checkpoint.get("model_kwargs")
     if not model_kwargs:
         raise ValueError("Checkpoint does not contain model_kwargs required for inspection.")
+    model_kwargs = dict(model_kwargs)
+    if "GravNet" in model_name and "normalization" not in model_kwargs:
+        # GravNet checkpoints written before block normalization was introduced
+        # used the legacy residual-only architecture.
+        model_kwargs["normalization"] = "none"
     model = MODEL_CLASSES[model_name](**model_kwargs)
     model.load_state_dict(checkpoint["model_state_dict"])
     model = model.to(device)

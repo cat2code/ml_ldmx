@@ -99,13 +99,23 @@ def save_checkpoint(path, model, optimizer, scheduler, epoch, args, history, bes
         temporary_path.unlink(missing_ok=True)
 
 
-def load_checkpoint(path, model, optimizer, scheduler, device):
+def read_checkpoint(path, device):
+    """Read a checkpoint without applying it to a model or optimizer."""
     try:
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
+        return torch.load(path, map_location=device, weights_only=False)
     except TypeError:
-        checkpoint = torch.load(path, map_location=device)
+        return torch.load(path, map_location=device)
+
+
+def restore_checkpoint(checkpoint, model, optimizer, scheduler):
+    """Restore a previously read checkpoint into initialized training objects."""
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     if scheduler is not None and checkpoint.get("scheduler_state_dict") is not None:
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     return checkpoint
+
+
+def load_checkpoint(path, model, optimizer, scheduler, device):
+    checkpoint = read_checkpoint(path, device)
+    return restore_checkpoint(checkpoint, model, optimizer, scheduler)
