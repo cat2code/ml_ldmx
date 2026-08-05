@@ -37,6 +37,9 @@ K="${K:-16}"
 GRAD_CLIP="${GRAD_CLIP:-1.0}"
 SHARD_CACHE_SIZE="${SHARD_CACHE_SIZE:-1}"
 CACHE_MODEL_VIEWS="${CACHE_MODEL_VIEWS:-0}"
+NUM_ECAL_PLOTS="${NUM_ECAL_PLOTS:-2}"
+NUM_DIAGNOSTIC_EVENT_DISPLAYS="${NUM_DIAGNOSTIC_EVENT_DISPLAYS:-3}"
+GPU_MONITOR_INTERVAL="${GPU_MONITOR_INTERVAL:-60}"
 SEED="${SEED:-7}"
 RESUME="${RESUME:-}"
 ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
@@ -69,6 +72,11 @@ if [[ -n "${SOURCE_LABEL}" ]]; then
 else
   VALID_LABELS=(1 2 3)
   RUN_NAME="${RUN_NAME:-${MODEL}_${EVENTS_PER_SOURCE}per_source_${SLURM_JOB_ID:-manual}}"
+fi
+
+if [[ ! "${GPU_MONITOR_INTERVAL}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "GPU_MONITOR_INTERVAL must be a positive integer; got '${GPU_MONITOR_INTERVAL}'" >&2
+  exit 2
 fi
 
 module --force purge
@@ -146,7 +154,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   gpu_monitor_cmd+=(
     "--query-gpu=timestamp,index,uuid,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw"
     --format=csv
-    -l 60
+    -l "${GPU_MONITOR_INTERVAL}"
   )
   "${gpu_monitor_cmd[@]}" > "${GPU_LOG}" 2>&1 &
   GPU_MONITOR_PID=$!
@@ -181,6 +189,8 @@ cmd=(
   --device cuda
   --output-root "${OUTPUT_ROOT}"
   --run-name "${RUN_NAME}"
+  --num-ecal-plots "${NUM_ECAL_PLOTS}"
+  --num-diagnostic-event-displays "${NUM_DIAGNOSTIC_EVENT_DISPLAYS}"
   --no-progress
 )
 if [[ "${CACHE_MODEL_VIEWS}" == "1" ]]; then
