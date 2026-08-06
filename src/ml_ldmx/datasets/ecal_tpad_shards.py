@@ -1125,6 +1125,7 @@ class MultiShardedECalTpadDataset(Dataset):
         return event
 
     def order_indices_for_access(self, indices, seed=None):
+        """Group all accesses by source and shard for read-only scans/evaluation."""
         grouped = {}
         for index in indices:
             source_idx = self._source_idx_for_event(int(index))
@@ -1148,3 +1149,75 @@ class MultiShardedECalTpadDataset(Dataset):
             )
             ordered.extend(self.offsets[source_idx] + local_index for local_index in local_order)
         return ordered
+
+    def balanced_batches_for_access(self, indices, batch_size, seed=None):
+        """
+        Build source-proportional optimizer batches while retaining shard locality.
+
+        Each source is ordered independently by its own sharded dataset, so its
+        one-shard LRU continues to work. A deterministic weighted round-robin
+        schedule then interleaves those source-local streams. This prevents a
+        mixed-source model from training on one complete source followed by the
+        next and catastrophically forgetting event-level source-dependent tasks.
+        """
+        batch_size = int(batch_size)
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {batch_size}.")
+
+        grouped = {}
+        for index in indices:
+            index = int(index)
+            source_idx = self._source_idx_for_event(index)
+            grouped.setdefault(source_idx, []).append(index)
+        if not grouped:
+            return []
+
+        source_streams = {}
+        for source_idx, group in grouped.items():
+            local_group = [index - self.offsets[source_idx] for index in group]
+            local_order = self.sources[source_idx]["dataset"].order_indices_for_access(
+                local_group,
+                seed=None if seed is None else int(seed) + source_idx + 1,
+            )
+            source_streams[source_idx] = [
+                self.offsets[source_idx] + local_index for local_index in local_order
+            ]
+
+        source_indices = list(source_streams)
+        if seed is None:
+            source_indices.sort()
+        else:
+            generator = torch.Generator().manual_seed(int(seed))
+            order = torch.randperm(len(source_indices), generator=generator).tolist()
+            source_indices = [source_indices[idx] for idx in order]
+        tie_rank = {source_idx: rank for rank, source_idx in enumerate(source_indices)}
+
+        source_counts = {
+            source_idx: len(source_streams[source_idx]) for source_idx in source_indices
+        }
+        emitted = {source_idx: 0 for source_idx in source_indices}
+        total = sum(source_counts.values())
+        ordered = []
+        for position in range(1, total + 1):
+            eligible = [
+                source_idx
+                for source_idx in source_indices
+                if emitted[source_idx] < source_counts[source_idx]
+            ]
+            # Integer deficit form of weighted round robin. It spreads even a
+            # small source imbalance over the epoch instead of leaving a long
+            # homogeneous tail after the minority source is exhausted.
+            source_idx = max(
+                eligible,
+                key=lambda idx: (
+                    position * source_counts[idx] - emitted[idx] * total,
+                    -tie_rank[idx],
+                ),
+            )
+            ordered.append(source_streams[source_idx][emitted[source_idx]])
+            emitted[source_idx] += 1
+
+        return [
+            ordered[start : start + batch_size]
+            for start in range(0, len(ordered), batch_size)
+        ]

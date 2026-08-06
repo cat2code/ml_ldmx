@@ -4,107 +4,42 @@ import torch
 import torch.nn.functional as F
 
 from ml_ldmx.train.batching import chunks
+from ml_ldmx.train.ecal_tpad_slot_batching import (
+    collate_ecal_tpad_slot_batch,
+    count_target_from_event,
+    ecal_mask_from_event,
+    fraction_targets_from_event,
+    origin_targets_from_event,
+    slot_targets_from_event,
+)
 from ml_ldmx.train.losses import soft_label_cross_entropy
 from ml_ldmx.train.metrics import confusion_matrix_from_class_indices
 from ml_ldmx.train.progress import make_progress
 
 
-def ecal_mask_from_event(event: dict) -> torch.Tensor:
-    if "ecal_mask" in event:
-        return event["ecal_mask"].to(dtype=torch.bool)
-    if "num_ecal" in event:
-        num_ecal = int(event["num_ecal"])
-    elif "y" in event:
-        num_ecal = int(event["y"].shape[0])
-    else:
-        raise KeyError("Event has neither ecal_mask, num_ecal, nor y to identify ECal nodes.")
-    mask = torch.zeros((event["x"].shape[0],), dtype=torch.bool)
-    mask[:num_ecal] = True
-    return mask
+def count_cross_entropy_per_event(logits, target, args):
+    """Return fixed-scale inverse-frequency-weighted count CE per event."""
+    loss = F.cross_entropy(logits, target, reduction="none")
+    count_weight = getattr(args, "count_class_weights", None)
+    if count_weight is None:
+        return loss
 
-
-def origin_targets_from_event(event: dict, max_electrons: int) -> torch.Tensor:
-    if "physical_y" in event:
-        target = event["physical_y"].to(dtype=torch.long)
-    elif "y" in event:
-        target = event["y"].to(dtype=torch.long) + 1
-    else:
-        raise KeyError("Event is missing both physical_y and y origin targets.")
-
-    if int(target.min().item()) < 0 or int(target.max().item()) > max_electrons:
+    count_weight = torch.as_tensor(
+        count_weight,
+        dtype=logits.dtype,
+        device=logits.device,
+    )
+    if count_weight.shape != (logits.shape[-1],):
         raise ValueError(
-            f"Origin targets must be in 0..{max_electrons}, got "
-            f"{int(target.min().item())}..{int(target.max().item())}."
+            f"Expected {logits.shape[-1]} count class weights, got {count_weight.numel()}."
         )
-    return target
-
-
-def fraction_targets_from_event(
-    event: dict,
-    origin_target: torch.Tensor,
-    max_electrons: int,
-) -> torch.Tensor:
-    num_classes = max_electrons + 1
-    if "fraction_target" not in event:
-        target = F.one_hot(origin_target.clamp(0, max_electrons), num_classes=num_classes).float()
-    else:
-        fraction_target = event["fraction_target"].to(dtype=torch.float32)
-        if fraction_target.shape[1] == num_classes:
-            target = fraction_target
-        elif fraction_target.shape[1] == max_electrons:
-            noise_column = torch.zeros(
-                (fraction_target.shape[0], 1),
-                dtype=fraction_target.dtype,
-                device=fraction_target.device,
-            )
-            target = torch.cat([noise_column, fraction_target], dim=1)
-        else:
-            raise ValueError(
-                f"Expected fraction_target with {max_electrons} or {num_classes} columns, "
-                f"got {fraction_target.shape[1]}."
-            )
-
-    noise_mask = event.get("is_noise_target")
-    if noise_mask is not None:
-        noise_mask = noise_mask.to(dtype=torch.bool)
-        if noise_mask.shape != (target.shape[0],):
-            raise ValueError("event['is_noise_target'] must align with fraction targets.")
-        target = target.clone()
-        target[noise_mask] = 0.0
-        target[noise_mask, 0] = 1.0
-    return target
-
-
-def slot_targets_from_event(
-    event: dict,
-    origin_target: torch.Tensor,
-    fraction_target: torch.Tensor,
-    max_electrons: int,
-) -> torch.Tensor:
-    valid = torch.zeros((max_electrons,), dtype=torch.float32, device=origin_target.device)
-    for slot_idx in range(max_electrons):
-        class_idx = slot_idx + 1
-        # A slot is valid if it owns any hard-label hit or any soft target mass.
-        has_hard_hit = bool((origin_target == class_idx).any().item())
-        has_fraction_mass = bool((fraction_target[:, class_idx].sum() > 0.0).item())
-        valid[slot_idx] = 1.0 if has_hard_hit or has_fraction_mass else 0.0
-    return valid
-
-
-def count_target_from_event(
-    event: dict,
-    slot_target: torch.Tensor,
-    max_electrons: int,
-) -> torch.Tensor:
-    for key in ("electron_count", "event_electron_count", "count_target", "num_electrons"):
-        if key in event:
-            value = event[key]
-            if isinstance(value, torch.Tensor):
-                value = int(value.detach().cpu().reshape(-1)[0].item())
-            else:
-                value = int(value)
-            return torch.tensor(min(max(value, 0), max_electrons), dtype=torch.long)
-    return slot_target.sum().detach().cpu().to(dtype=torch.long).clamp(max=max_electrons)
+    positive_weight = count_weight[count_weight > 0]
+    if positive_weight.numel() == 0:
+        raise ValueError("At least one count class weight must be positive.")
+    # A fixed normalization keeps the loss scale independent of the classes in
+    # one particular batch. This also makes weighting effective for the legacy
+    # one-event helper, where PyTorch's weighted mean otherwise cancels it.
+    return loss * count_weight[target] / positive_weight.mean()
 
 
 def compute_event_losses(model, event: dict, device: torch.device, args):
@@ -136,14 +71,12 @@ def compute_event_losses(model, event: dict, device: torch.device, args):
     origin_loss = F.cross_entropy(ecal_origin_logits, origin_target, weight=origin_weight)
     fraction_loss = soft_label_cross_entropy(ecal_fraction_logits, fraction_target)
     slot_loss = F.binary_cross_entropy_with_logits(outputs["slot_valid_logits"], slot_target)
-    count_weight = getattr(args, "count_class_weights", None)
-    if count_weight is not None:
-        count_weight = torch.as_tensor(count_weight, dtype=torch.float32, device=device)
-    count_loss = F.cross_entropy(
+    count_loss = count_cross_entropy_per_event(
         outputs["count_logits"].unsqueeze(0),
         count_target.unsqueeze(0),
-        weight=count_weight,
+        args,
     )
+    count_loss = count_loss.squeeze(0)
     total_loss = (
         args.lambda_origin * origin_loss
         + args.lambda_fraction * fraction_loss
@@ -181,6 +114,93 @@ def compute_event_losses(model, event: dict, device: torch.device, args):
     }
 
 
+def compute_batch_losses(model, events: list[dict], device: torch.device, args):
+    """Compute the existing per-event objective with one parallel padded forward."""
+    batch = collate_ecal_tpad_slot_batch(events, model.max_electrons).to(device)
+    outputs = model(
+        batch.x,
+        ecal_mask=batch.ecal_mask,
+        key_padding_mask=~batch.valid_mask,
+    )
+
+    origin_weight = getattr(args, "origin_class_weights", None)
+    if origin_weight is not None:
+        origin_weight = torch.as_tensor(origin_weight, dtype=torch.float32, device=device)
+    origin_token_loss = F.cross_entropy(
+        outputs["origin_logits"].movedim(-1, 1),
+        batch.origin_target,
+        weight=origin_weight,
+        ignore_index=-100,
+        reduction="none",
+    )
+    if origin_weight is None:
+        origin_denominator = batch.ecal_mask.sum(dim=1).to(dtype=origin_token_loss.dtype)
+    else:
+        safe_target = batch.origin_target.clamp_min(0)
+        origin_denominator = (
+            origin_weight[safe_target] * batch.ecal_mask.to(dtype=origin_token_loss.dtype)
+        ).sum(dim=1)
+    origin_loss_per_event = origin_token_loss.sum(dim=1) / origin_denominator
+
+    fraction_token_loss = -(
+        batch.fraction_target * F.log_softmax(outputs["fraction_logits"], dim=-1)
+    ).sum(dim=-1)
+    num_hits_per_event = batch.ecal_mask.sum(dim=1).to(dtype=fraction_token_loss.dtype)
+    fraction_loss_per_event = fraction_token_loss.sum(dim=1) / num_hits_per_event
+
+    slot_loss_per_event = F.binary_cross_entropy_with_logits(
+        outputs["slot_valid_logits"],
+        batch.slot_target,
+        reduction="none",
+    ).mean(dim=1)
+
+    count_loss_per_event = count_cross_entropy_per_event(
+        outputs["count_logits"],
+        batch.count_target,
+        args,
+    )
+    total_loss_per_event = (
+        args.lambda_origin * origin_loss_per_event
+        + args.lambda_fraction * fraction_loss_per_event
+        + args.lambda_slot * slot_loss_per_event
+        + args.lambda_count * count_loss_per_event
+    )
+
+    ecal_fraction_pred = outputs["fraction_pred"][batch.ecal_mask]
+    fraction_target = batch.fraction_target[batch.ecal_mask]
+    true_class = batch.origin_target[batch.ecal_mask]
+    pred_class = outputs["origin_logits"][batch.ecal_mask].argmax(dim=1)
+    fraction_abs_error = (ecal_fraction_pred - fraction_target).abs()
+    slot_prob = torch.sigmoid(outputs["slot_valid_logits"])
+    slot_pred = slot_prob > 0.5
+    count_pred = outputs["count_logits"].argmax(dim=-1)
+    slot_count_pred = slot_pred.to(dtype=torch.long).sum(dim=1)
+
+    return {
+        "total_loss": total_loss_per_event.mean(),
+        "origin_loss": origin_loss_per_event.mean(),
+        "fraction_loss": fraction_loss_per_event.mean(),
+        "slot_loss": slot_loss_per_event.mean(),
+        "count_loss": count_loss_per_event.mean(),
+        "fraction_mse": F.mse_loss(ecal_fraction_pred, fraction_target),
+        "fraction_mae": fraction_abs_error.mean(),
+        "per_hit_fraction_mae": fraction_abs_error.mean(dim=1),
+        "fraction_target": fraction_target,
+        "fraction_pred": ecal_fraction_pred,
+        "pred_class": pred_class,
+        "true_class": true_class,
+        "slot_target": batch.slot_target,
+        "slot_pred": slot_pred,
+        "slot_prob": slot_prob,
+        "count_target": batch.count_target,
+        "count_pred": count_pred,
+        "slot_count_pred": slot_count_pred,
+        "num_hits": batch.num_hits,
+        "num_events": batch.batch_size,
+        "batch": batch,
+    }
+
+
 def empty_slot_metric_totals(num_hit_classes: int, num_count_classes: int):
     return {
         "loss_sum": 0.0,
@@ -207,6 +227,7 @@ def empty_slot_metric_totals(num_hit_classes: int, num_count_classes: int):
 
 def update_slot_metric_totals(totals: dict, losses: dict):
     num_hits = int(losses["num_hits"])
+    num_events = int(losses.get("num_events", 1))
     loss_values = torch.stack(
         [
             losses["total_loss"],
@@ -218,11 +239,11 @@ def update_slot_metric_totals(totals: dict, losses: dict):
             losses["fraction_mae"],
         ]
     ).detach().cpu()
-    totals["loss_sum"] += float(loss_values[0].item())
-    totals["origin_loss_sum"] += float(loss_values[1].item())
-    totals["fraction_loss_sum"] += float(loss_values[2].item())
-    totals["slot_loss_sum"] += float(loss_values[3].item())
-    totals["count_loss_sum"] += float(loss_values[4].item())
+    totals["loss_sum"] += float(loss_values[0].item()) * num_events
+    totals["origin_loss_sum"] += float(loss_values[1].item()) * num_events
+    totals["fraction_loss_sum"] += float(loss_values[2].item()) * num_events
+    totals["slot_loss_sum"] += float(loss_values[3].item()) * num_events
+    totals["count_loss_sum"] += float(loss_values[4].item()) * num_events
     totals["fraction_mse_sum"] += float(loss_values[5].item()) * num_hits
     totals["fraction_mae_sum"] += float(loss_values[6].item()) * num_hits
 
@@ -237,31 +258,32 @@ def update_slot_metric_totals(totals: dict, losses: dict):
 
     slot_pred = losses["slot_pred"].detach().cpu()
     slot_true = losses["slot_target"].detach().cpu().to(dtype=torch.bool)
+    if slot_pred.ndim == 1:
+        slot_pred = slot_pred.unsqueeze(0)
+        slot_true = slot_true.unsqueeze(0)
     totals["slot_correct"] += int((slot_pred == slot_true).sum().item())
     totals["slot_total"] += int(slot_true.numel())
-    totals["slot_exact_correct"] += int(bool((slot_pred == slot_true).all().item()))
+    totals["slot_exact_correct"] += int((slot_pred == slot_true).all(dim=1).sum().item())
 
-    count_pair = torch.stack(
-        [
-            losses["count_target"].reshape(()),
-            losses["count_pred"].reshape(()),
-        ]
-    ).detach().cpu().to(dtype=torch.long)
-    count_true = int(count_pair[0].item())
-    count_pred = int(count_pair[1].item())
-    slot_count_pred = int(slot_pred.to(dtype=torch.long).sum().item())
-    totals["count_correct"] += int(count_pred == count_true)
-    totals["slot_count_correct"] += int(slot_count_pred == count_true)
-    totals["count_total_by_true"][count_true] = totals["count_total_by_true"].get(count_true, 0) + 1
-    totals["count_correct_by_true"][count_true] = totals["count_correct_by_true"].get(count_true, 0) + int(
-        count_pred == count_true
-    )
+    count_true = losses["count_target"].detach().cpu().reshape(-1).to(dtype=torch.long)
+    count_pred = losses["count_pred"].detach().cpu().reshape(-1).to(dtype=torch.long)
+    slot_count_pred = slot_pred.to(dtype=torch.long).sum(dim=1)
+    totals["count_correct"] += int((count_pred == count_true).sum().item())
+    totals["slot_count_correct"] += int((slot_count_pred == count_true).sum().item())
+    for true_value, pred_value in zip(count_true.tolist(), count_pred.tolist()):
+        totals["count_total_by_true"][true_value] = (
+            totals["count_total_by_true"].get(true_value, 0) + 1
+        )
+        totals["count_correct_by_true"][true_value] = (
+            totals["count_correct_by_true"].get(true_value, 0)
+            + int(pred_value == true_value)
+        )
     totals["count_confusion"] += confusion_matrix_from_class_indices(
-        count_pair[:1],
-        count_pair[1:],
+        count_true,
+        count_pred,
         totals["count_confusion"].shape[0],
     ).cpu()
-    totals["events"] += 1
+    totals["events"] += num_events
 
 
 def finalize_slot_metrics(totals: dict, prefix: str = ""):
@@ -314,17 +336,39 @@ def event_prediction_record(event_idx: int, event: dict, losses: dict) -> dict:
     return record
 
 
+def batch_prediction_records(event_indices, events: list[dict], losses: dict) -> list[dict]:
+    """Build event-level records from a batched result without reloading events."""
+    records = []
+    for row, (event_idx, event) in enumerate(zip(event_indices, events)):
+        row_losses = {
+            "count_target": losses["count_target"][row],
+            "count_pred": losses["count_pred"][row],
+            "slot_count_pred": losses["slot_count_pred"][row],
+            "slot_target": losses["slot_target"][row],
+            "slot_prob": losses["slot_prob"][row],
+        }
+        records.append(event_prediction_record(event_idx, event, row_losses))
+    return records
+
+
 def train_one_epoch(model, events, train_indices, optimizer, args, device, epoch, logger):
     model.train()
-    if hasattr(events, "order_indices_for_access"):
+    if hasattr(events, "balanced_batches_for_access"):
+        batch_indices = events.balanced_batches_for_access(
+            train_indices,
+            batch_size=args.batch_size,
+            seed=args.seed + epoch,
+        )
+    elif hasattr(events, "order_indices_for_access"):
         shuffled_indices = events.order_indices_for_access(train_indices, seed=args.seed + epoch)
+        batch_indices = list(chunks(shuffled_indices, args.batch_size))
     else:
         generator = torch.Generator().manual_seed(args.seed + epoch)
         shuffled_indices = [
             train_indices[idx]
             for idx in torch.randperm(len(train_indices), generator=generator).tolist()
         ]
-    batch_indices = list(chunks(shuffled_indices, args.batch_size))
+        batch_indices = list(chunks(shuffled_indices, args.batch_size))
     totals = empty_slot_metric_totals(
         num_hit_classes=args.max_electrons + 1,
         num_count_classes=args.max_electrons + 1,
@@ -340,14 +384,10 @@ def train_one_epoch(model, events, train_indices, optimizer, args, device, epoch
 
     for batch in progress:
         optimizer.zero_grad(set_to_none=True)
-        batch_loss_sum = None
-        for event_idx in batch:
-            losses = compute_event_losses(model, events[event_idx], device, args)
-            update_slot_metric_totals(totals, losses)
-            batch_loss_sum = losses["total_loss"] if batch_loss_sum is None else batch_loss_sum + losses["total_loss"]
-
-        batch_loss = batch_loss_sum / max(1, len(batch))
-        batch_loss.backward()
+        batch_events = [events[event_idx] for event_idx in batch]
+        losses = compute_batch_losses(model, batch_events, device, args)
+        update_slot_metric_totals(totals, losses)
+        losses["total_loss"].backward()
         if args.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         optimizer.step()

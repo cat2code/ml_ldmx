@@ -610,6 +610,12 @@ def main():
         logger.info("Noise handling: filtering noise hits at training access time; background class receives no hit supervision")
 
     events, event_sources, data_dir, root_files = load_events(args, logger)
+    args.training_batch_policy = (
+        "source-balanced-shard-local-v1"
+        if hasattr(events, "balanced_batches_for_access")
+        else "random-event-v1"
+    )
+    logger.info("Training batch policy: %s", args.training_batch_policy)
     if args.supervise_noise:
         require_explicit_noise_targets(events)
     if len(events) < 20:
@@ -667,6 +673,14 @@ def main():
                 f"{tuple(args.valid_labels)}."
             )
         checkpoint_args = checkpoint.get("args", {})
+        checkpoint_batch_policy = checkpoint_args.get("training_batch_policy")
+        if checkpoint_batch_policy != args.training_batch_policy:
+            raise ValueError(
+                "Checkpoint training batch policy "
+                f"{checkpoint_batch_policy or 'legacy-source-blocked-v0'!r} does not match "
+                f"the current policy {args.training_batch_policy!r}. Start a fresh run; "
+                "legacy mixed-source optimizer state is not safe to resume."
+            )
         checkpoint_target_mode = checkpoint_args.get("target_mode")
         if checkpoint_target_mode is not None and checkpoint_target_mode != args.target_mode:
             raise ValueError(

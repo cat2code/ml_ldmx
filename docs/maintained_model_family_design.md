@@ -72,8 +72,11 @@ The current slot-model runner is
 6. **Model and training.** `ECalTpadSlotModel` encodes all event tokens and
    produces per-token origin and fraction logits plus event-level
    slot-validity and electron-count logits. `ml_ldmx.train.ecal_tpad_slot_model`
-   applies hit losses only at ECal nodes, accumulates event-level metrics, and
-   optimizes per small group of events.
+   pads variable-length events into true masked batches, applies hit losses only
+   at ECal nodes, source-balances mixed `2e`/`3e` optimizer batches while
+   retaining per-source shard locality, accumulates event-level metrics, and
+   performs one parallel model forward/backward per optimizer batch. Run
+   configuration records this as `source-balanced-shard-local-v1`.
 7. **Evaluation.** `ml_ldmx.eval.ecal_tpad_slot_model.evaluate()` reuses the
    training loss/metric definitions for validation and test splits and can
    collect event-count prediction records.

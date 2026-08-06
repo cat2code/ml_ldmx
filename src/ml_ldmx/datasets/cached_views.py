@@ -53,6 +53,19 @@ class CachedEventViewDataset:
             return self.events.order_indices_for_access(indices, seed=seed)
         return list(indices)
 
+    def balanced_batches_for_access(self, indices, batch_size, seed=None):
+        if hasattr(self.events, "balanced_batches_for_access"):
+            return self.events.balanced_batches_for_access(
+                indices,
+                batch_size=batch_size,
+                seed=seed,
+            )
+        ordered = self.order_indices_for_access(indices, seed=seed)
+        return [
+            ordered[start : start + batch_size]
+            for start in range(0, len(ordered), batch_size)
+        ]
+
     @property
     def source_files(self):
         return self.events.source_files if hasattr(self.events, "source_files") else []

@@ -2,9 +2,9 @@ import torch
 
 from ml_ldmx.train.batching import chunks
 from ml_ldmx.train.ecal_tpad_slot_model import (
-    compute_event_losses,
+    batch_prediction_records,
+    compute_batch_losses,
     empty_slot_metric_totals,
-    event_prediction_record,
     finalize_slot_metrics,
     update_slot_metric_totals,
 )
@@ -25,11 +25,11 @@ def evaluate(model, events, indices, args, device, split_name, collect_predictio
         else indices
     )
     for batch in chunks(ordered_indices, args.batch_size):
-        for event_idx in batch:
-            losses = compute_event_losses(model, events[event_idx], device, args)
-            update_slot_metric_totals(totals, losses)
-            if collect_predictions:
-                predictions.append(event_prediction_record(event_idx, events[event_idx], losses))
+        batch_events = [events[event_idx] for event_idx in batch]
+        losses = compute_batch_losses(model, batch_events, device, args)
+        update_slot_metric_totals(totals, losses)
+        if collect_predictions:
+            predictions.extend(batch_prediction_records(batch, batch_events, losses))
 
     metrics = finalize_slot_metrics(totals, prefix=f"{split_name}_")
     metrics[f"{split_name}_hit_confusion"] = totals["hit_confusion"].tolist()
