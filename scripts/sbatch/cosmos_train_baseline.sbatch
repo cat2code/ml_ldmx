@@ -44,6 +44,7 @@ SEED="${SEED:-7}"
 RESUME="${RESUME:-}"
 ECAL_ENERGY_TRANSFORM="${ECAL_ENERGY_TRANSFORM:-log1p}"
 TPAD_PE_TRANSFORM="${TPAD_PE_TRANSFORM:-log1p}"
+DEVICE="${DEVICE:-cuda}"
 
 if [[ -n "${SOURCE_LABEL}" ]]; then
   case "${SOURCE_LABEL}" in
@@ -74,7 +75,11 @@ else
   RUN_NAME="${RUN_NAME:-${MODEL}_${EVENTS_PER_SOURCE}per_source_${SLURM_JOB_ID:-manual}}"
 fi
 
-if [[ ! "${GPU_MONITOR_INTERVAL}" =~ ^[1-9][0-9]*$ ]]; then
+if [[ "${DEVICE}" != "cuda" && "${DEVICE}" != "cpu" ]]; then
+  echo "DEVICE must be cuda or cpu; got '${DEVICE}'" >&2
+  exit 2
+fi
+if [[ "${DEVICE}" == "cuda" && ! "${GPU_MONITOR_INTERVAL}" =~ ^[1-9][0-9]*$ ]]; then
   echo "GPU_MONITOR_INTERVAL must be a positive integer; got '${GPU_MONITOR_INTERVAL}'" >&2
   exit 2
 fi
@@ -90,6 +95,8 @@ source "${VENV_DIR:-${REPO_ROOT}/.venv}/bin/activate"
 
 export MPLBACKEND=Agg
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
+export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export PYTHONUNBUFFERED=1
 
 JOB_STARTED_AT="$(date --iso-8601=seconds)"
@@ -128,6 +135,7 @@ if [[ -n "$(git status --short)" ]]; then
   git status --short
 fi
 echo "model: ${MODEL}"
+echo "device: ${DEVICE}"
 echo "processed cache root: ${PROCESSED_CACHE_ROOT}"
 echo "events per source: ${EVENTS_PER_SOURCE}"
 echo "valid labels: ${VALID_LABELS[*]}"
@@ -137,8 +145,10 @@ if [[ -n "${SOURCE_LABEL}" ]]; then
   echo "single source: ${SOURCE_LABEL} (${ELECTRON_COUNT} electrons)"
 fi
 python --version
-nvidia-smi
-python -u tests/check_cuda_environment.py
+if [[ "${DEVICE}" == "cuda" ]]; then
+  nvidia-smi
+  python -u tests/check_cuda_environment.py
+fi
 python -c "import ml_ldmx, numpy, torch, torch_geometric; print('Training dependencies are available')"
 if [[ "${MODEL}" == *GravNet ]]; then
   python -c "import torch_cluster, torch_scatter; print('torch-cluster and torch-scatter are available')"
@@ -146,7 +156,7 @@ fi
 if [[ -n "${SLURM_JOB_ID:-}" ]] && command -v scontrol >/dev/null 2>&1; then
   scontrol show job "${SLURM_JOB_ID}" || true
 fi
-if command -v nvidia-smi >/dev/null 2>&1; then
+if [[ "${DEVICE}" == "cuda" ]] && command -v nvidia-smi >/dev/null 2>&1; then
   gpu_monitor_cmd=(nvidia-smi)
   if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
     gpu_monitor_cmd+=(--id="${CUDA_VISIBLE_DEVICES}")
@@ -186,7 +196,7 @@ cmd=(
   --valid-labels "${VALID_LABELS[@]}"
   --ecal-energy-transform "${ECAL_ENERGY_TRANSFORM}"
   --tpad-pe-transform "${TPAD_PE_TRANSFORM}"
-  --device cuda
+  --device "${DEVICE}"
   --output-root "${OUTPUT_ROOT}"
   --run-name "${RUN_NAME}"
   --num-ecal-plots "${NUM_ECAL_PLOTS}"

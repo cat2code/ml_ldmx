@@ -252,6 +252,22 @@ immediately to `submitted_jobs.tsv`. It deliberately uses no job dependency:
 each training wrapper performs its own CUDA/import checks, and one failed job
 cannot leave the other jobs permanently blocked.
 
+If the GPU copies of the normalized 100k GravNet runs are delayed, submit only
+equivalent `2e` and `3e` CPU duplicates with:
+
+```bash
+bash scripts/submit_cosmos_gravnet_100k_cpu_campaign.sh
+```
+
+This creates a separate timestamped output root and submits two independent
+`lu48` jobs (`ml_g2n_c100k` and `ml_g3n_c100k`) with 16 CPU cores and 64 GiB
+each. It does not cancel, depend on, or share an output directory with any GPU
+job. The architecture, dataset selection, optimizer, seed, normalization,
+batch size, epoch limit, and early-stopping settings match the GravNet entries
+in the four-run GPU campaign. If both copies finish, treat them as replicated
+runs of the same experiment and report one checkpoint consistently rather than
+combining their test results.
+
 Set `DRY_RUN=1` to print all four `sbatch` commands without submitting. Set an
 explicit `CAMPAIGN` to choose the campaign directory name, or leave it unset
 for a timestamped name. `SBATCH_ACCOUNT` is optional and is forwarded only
