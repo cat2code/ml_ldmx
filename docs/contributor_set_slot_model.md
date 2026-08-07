@@ -103,3 +103,36 @@ The saved checkpoint plus configuration and split indices are sufficient to
 recompute full hit-level outputs and create new plots later. To stop cleanly
 after the current epoch, create an empty `STOP_AFTER_EPOCH` file in the run
 directory. A resumable checkpoint is also written on `KeyboardInterrupt`.
+
+## Paired TPad ablation
+
+The post-training ablation evaluates the same saved split from the same
+checkpoint twice. The reference pass uses ECal and TPad tokens; the ablated
+pass removes every TPad token while leaving ECal tokens, targets, feature
+normalization, event order, and model weights unchanged. Removing tokens is
+deliberate: zeroing normalized TPad features would leave detector-type tokens
+that the Transformer could still use.
+
+The analysis defaults to `checkpoints/best.pt` and the saved test split:
+
+```bash
+python scripts/analyze_contributor_set_tpad_ablation.py \
+  --run-dir outputs/cosmos_contributor_set_slot/<campaign>/<run> \
+  --device cpu
+```
+
+On COSMOS the same inference-only analysis can be submitted to the CPU
+partition, so it does not wait for a GPU:
+
+```bash
+RUN_DIR="$PWD/outputs/cosmos_contributor_set_slot/<campaign>/<run>" \
+  sbatch scripts/sbatch/cosmos_analyze_contributor_set_tpad_ablation.sbatch
+```
+
+It writes paired confusion matrices, cross-task metric comparisons, an
+electron-count-focused diagnostic, fraction errors, mixed-hit diagnostics,
+the two full event-prediction tables, sampled hit outputs, and a JSON summary
+under `<run>/tpad_ablation/best/test/`.
+
+This is an inference-time reliance test of the trained ECal+TPad model. It is
+not equivalent to training a separate ECal-only model from scratch.
