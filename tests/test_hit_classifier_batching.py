@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from ml_ldmx.models import ECalGravNet, ECalTransformer
+from ml_ldmx.models import ECalGravNet, ECalPreLNTransformer, ECalTransformer
 from ml_ldmx.train.hit_classifier_baseline import compute_batch_losses, compute_event_losses
 from ml_ldmx.train.hit_classifier_batching import (
     IGNORE_INDEX,
@@ -20,6 +20,38 @@ def _view(x, ecal_mask, y):
 
 
 class HitClassifierBatchingTest(unittest.TestCase):
+    def test_explicit_preln_transformer_uses_pre_layernorm_and_final_norm(self):
+        model = ECalPreLNTransformer(
+            in_dim=3,
+            d_model=4,
+            nhead=2,
+            num_layers=2,
+            dim_feedforward=8,
+            dropout=0.0,
+            out_dim=3,
+        )
+
+        self.assertEqual(model.normalization, "pre_layernorm")
+        self.assertTrue(all(layer.norm_first for layer in model.encoder.layers))
+        self.assertIsInstance(model.encoder.norm, torch.nn.LayerNorm)
+        self.assertIn("encoder.norm.weight", model.state_dict())
+
+    def test_baseline_transformer_retains_post_layernorm_default(self):
+        model = ECalTransformer(
+            in_dim=3,
+            d_model=4,
+            nhead=2,
+            num_layers=2,
+            dim_feedforward=8,
+            dropout=0.0,
+            out_dim=3,
+        )
+
+        self.assertEqual(model.normalization, "post_layernorm")
+        self.assertTrue(all(not layer.norm_first for layer in model.encoder.layers))
+        self.assertIsNone(model.encoder.norm)
+        self.assertNotIn("encoder.norm.weight", model.state_dict())
+
     def test_gravnet_uses_batch_normalization_by_default(self):
         try:
             model = ECalGravNet(

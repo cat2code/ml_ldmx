@@ -5,7 +5,12 @@ import torch.nn as nn
 
 
 class _TransformerHitClassifier(nn.Module):
-    """Per-token classifier using full self-attention over one event."""
+    """Per-token classifier using full self-attention over one event.
+
+    The maintained baseline retains PyTorch's original post-layer-normalized
+    encoder. Explicit ``*PreLNTransformer`` variants use pre-layer
+    normalization plus a final encoder LayerNorm.
+    """
 
     def __init__(
         self,
@@ -16,6 +21,7 @@ class _TransformerHitClassifier(nn.Module):
         dim_feedforward: int = 128,
         dropout: float = 0.1,
         out_dim: int = 3,
+        normalization: str = "post_layernorm",
     ):
         super().__init__()
         if in_dim <= 0 or d_model <= 0 or out_dim <= 0:
@@ -24,9 +30,14 @@ class _TransformerHitClassifier(nn.Module):
             raise ValueError("nhead, num_layers, and dim_feedforward must be positive.")
         if d_model % nhead != 0:
             raise ValueError("d_model must be divisible by nhead.")
+        if normalization not in ("pre_layernorm", "post_layernorm"):
+            raise ValueError(
+                "normalization must be 'pre_layernorm' or 'post_layernorm'."
+            )
 
         self.in_dim = in_dim
         self.out_dim = out_dim
+        self.normalization = normalization
         self.input_proj = nn.Sequential(
             nn.Linear(in_dim, d_model),
             nn.ReLU(),
@@ -38,10 +49,12 @@ class _TransformerHitClassifier(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
+            norm_first=normalization == "pre_layernorm",
         )
         self.encoder = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_layers,
+            norm=nn.LayerNorm(d_model) if normalization == "pre_layernorm" else None,
             enable_nested_tensor=False,
         )
         self.head = nn.Linear(d_model, out_dim)
@@ -90,6 +103,25 @@ class ECalTransformer(_TransformerHitClassifier):
 
 class ECalTpadTransformer(_TransformerHitClassifier):
     """ECal plus TriggerPadTracks full-self-attention hit-origin classifier."""
+
+
+class _PreLNTransformerHitClassifier(_TransformerHitClassifier):
+    """Explicit pre-LN Transformer variant with a final encoder LayerNorm."""
+
+    def __init__(self, *args, normalization: str = "pre_layernorm", **kwargs):
+        if normalization != "pre_layernorm":
+            raise ValueError(
+                "Explicit PreLN Transformer variants require normalization='pre_layernorm'."
+            )
+        super().__init__(*args, normalization=normalization, **kwargs)
+
+
+class ECalPreLNTransformer(_PreLNTransformerHitClassifier):
+    """Experimental pre-LN ECal-only full-self-attention classifier."""
+
+
+class ECalTpadPreLNTransformer(_PreLNTransformerHitClassifier):
+    """Experimental pre-LN ECal plus TriggerPadTracks classifier."""
 
 
 class ECalHitTransformer(ECalTransformer):

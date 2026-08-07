@@ -46,12 +46,16 @@ MODEL_CLASSES = {
     "ECalTpadGravNet": training.ECalTpadGravNet,
     "ECalTransformer": training.ECalTransformer,
     "ECalTpadTransformer": training.ECalTpadTransformer,
+    "ECalPreLNTransformer": training.ECalPreLNTransformer,
+    "ECalTpadPreLNTransformer": training.ECalTpadPreLNTransformer,
 }
 MODEL_VIEWS = {
     "ECalGravNet": training.ecal_gravnet_view,
     "ECalTpadGravNet": training.ecal_tpad_gravnet_view,
     "ECalTransformer": training.ecal_transformer_view,
     "ECalTpadTransformer": training.ecal_tpad_transformer_view,
+    "ECalPreLNTransformer": training.ecal_transformer_view,
+    "ECalTpadPreLNTransformer": training.ecal_tpad_transformer_view,
 }
 
 
@@ -334,6 +338,10 @@ def restore_model(checkpoint, args, device):
         # GravNet checkpoints written before block normalization was introduced
         # used the legacy residual-only architecture.
         model_kwargs["normalization"] = "none"
+    if "Transformer" in model_name and "normalization" not in model_kwargs:
+        model_kwargs["normalization"] = (
+            "pre_layernorm" if "PreLNTransformer" in model_name else "post_layernorm"
+        )
     model = MODEL_CLASSES[model_name](**model_kwargs)
     model.load_state_dict(checkpoint["model_state_dict"])
     model = model.to(device)

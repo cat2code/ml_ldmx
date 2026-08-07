@@ -28,15 +28,21 @@ Out of scope for the initial shared contract:
 
 | Maintained name | Event view | Architecture | Initial outputs |
 | --- | --- | --- | --- |
-| `ECalGravNet` | ECal-only derived view | `GravNetConv` | Hit origin class only |
-| `ECalTpadGravNet` | ECal plus TriggerPadTracks | `GravNetConv` | Hit origin class only |
-| `ECalTransformer` | ECal-only derived view | Full self-attention | Hit origin class only |
-| `ECalTpadTransformer` | ECal plus TriggerPadTracks | Full self-attention | Hit origin class only |
+| `ECalGravNet` | ECal-only derived view | Residual `GravNetConv` blocks with block BatchNorm | Hit origin class only |
+| `ECalTpadGravNet` | ECal plus TriggerPadTracks | Residual `GravNetConv` blocks with block BatchNorm | Hit origin class only |
+| `ECalTransformer` | ECal-only derived view | Post-LN full self-attention | Hit origin class only |
+| `ECalTpadTransformer` | ECal plus TriggerPadTracks | Post-LN full self-attention | Hit origin class only |
 | `ECalTpadSlotModel` | ECal plus TriggerPadTracks | Full self-attention, multi-task heads | Hit origin, energy fraction, electron count, noise/background |
 
 The first four models are baseline classifiers. They must not acquire fraction,
 count, noise, or event-level heads as a convenience of sharing training code.
 `ECalTpadSlotModel` is the advanced model, not a baseline renamed as one.
+The parallel `ECalPreLNTransformer` and `ECalTpadPreLNTransformer` experiments
+share the baseline topology but normalize before each attention/feed-forward
+sublayer and apply a final encoder LayerNorm. Checkpoints store the selected
+normalization architecture in `model_kwargs`. Older GravNet checkpoints are
+reconstructed with their legacy unnormalized blocks rather than being loaded
+into a different network.
 
 ## Current Reference Workflow
 

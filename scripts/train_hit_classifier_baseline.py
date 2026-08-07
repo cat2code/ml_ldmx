@@ -42,7 +42,14 @@ from ml_ldmx.datasets.tensorize import DOMINANT_ORIGIN_TARGET_RULE
 from ml_ldmx.eval.event_diagnostics import select_representative_events
 from ml_ldmx.eval.hit_classifier_baseline import collect_event_metrics, evaluate
 from ml_ldmx.io.artifacts import save_config, save_history, save_json
-from ml_ldmx.models import ECalGravNet, ECalTpadGravNet, ECalTpadTransformer, ECalTransformer
+from ml_ldmx.models import (
+    ECalGravNet,
+    ECalPreLNTransformer,
+    ECalTpadGravNet,
+    ECalTpadPreLNTransformer,
+    ECalTpadTransformer,
+    ECalTransformer,
+)
 from ml_ldmx.train.checkpoints import (
     read_checkpoint,
     require_matching_hard_origin_target_rule,
@@ -76,7 +83,14 @@ from ml_ldmx.viz.training import (
 )
 
 
-MODEL_NAMES = ("ECalGravNet", "ECalTpadGravNet", "ECalTransformer", "ECalTpadTransformer")
+MODEL_NAMES = (
+    "ECalGravNet",
+    "ECalTpadGravNet",
+    "ECalTransformer",
+    "ECalTpadTransformer",
+    "ECalPreLNTransformer",
+    "ECalTpadPreLNTransformer",
+)
 VALID_LABELS = (1, 2, 3)
 DEFAULT_PROCESSED_DIR = PROJECT_ROOT / "data/processed/ecal_tpad_hit_classifier_baseline"
 DEFAULT_DATA_ROOT = PROJECT_ROOT / "data/ldmx_overlay_events_700k"
@@ -448,7 +462,12 @@ def prepare_targets_and_features(events, splits, args, logger):
     return None
 
 
-def model_and_view(args, input_dim, gravnet_normalization="batchnorm"):
+def model_and_view(
+    args,
+    input_dim,
+    gravnet_normalization="batchnorm",
+    transformer_normalization=None,
+):
     out_dim = len(args.valid_labels)
     if args.model == "ECalGravNet":
         return (
@@ -480,6 +499,10 @@ def model_and_view(args, input_dim, gravnet_normalization="batchnorm"):
             ),
             ecal_tpad_gravnet_view,
         )
+    if transformer_normalization is None:
+        transformer_normalization = (
+            "pre_layernorm" if "PreLNTransformer" in args.model else "post_layernorm"
+        )
     transformer_kwargs = {
         "in_dim": input_dim,
         "d_model": args.hidden_dim,
@@ -488,13 +511,27 @@ def model_and_view(args, input_dim, gravnet_normalization="batchnorm"):
         "dim_feedforward": args.dim_feedforward,
         "dropout": args.dropout,
         "out_dim": out_dim,
+        "normalization": transformer_normalization,
     }
-    if args.model == "ECalTransformer":
-        return ECalTransformer(**transformer_kwargs), ecal_transformer_view
-    return ECalTpadTransformer(**transformer_kwargs), ecal_tpad_transformer_view
+    transformer_models = {
+        "ECalTransformer": (ECalTransformer, ecal_transformer_view),
+        "ECalTpadTransformer": (ECalTpadTransformer, ecal_tpad_transformer_view),
+        "ECalPreLNTransformer": (ECalPreLNTransformer, ecal_transformer_view),
+        "ECalTpadPreLNTransformer": (
+            ECalTpadPreLNTransformer,
+            ecal_tpad_transformer_view,
+        ),
+    }
+    model_class, view_fn = transformer_models[args.model]
+    return model_class(**transformer_kwargs), view_fn
 
 
-def model_kwargs_from_args(args, input_dim, gravnet_normalization="batchnorm"):
+def model_kwargs_from_args(
+    args,
+    input_dim,
+    gravnet_normalization="batchnorm",
+    transformer_normalization=None,
+):
     if "GravNet" in args.model:
         return {
             "in_dim": input_dim,
@@ -507,6 +544,10 @@ def model_kwargs_from_args(args, input_dim, gravnet_normalization="batchnorm"):
             "dropout": args.dropout,
             "normalization": gravnet_normalization,
         }
+    if transformer_normalization is None:
+        transformer_normalization = (
+            "pre_layernorm" if "PreLNTransformer" in args.model else "post_layernorm"
+        )
     return {
         "in_dim": input_dim,
         "d_model": args.hidden_dim,
@@ -515,6 +556,7 @@ def model_kwargs_from_args(args, input_dim, gravnet_normalization="batchnorm"):
         "dim_feedforward": args.dim_feedforward,
         "dropout": args.dropout,
         "out_dim": len(args.valid_labels),
+        "normalization": transformer_normalization,
     }
 
 
@@ -882,10 +924,15 @@ def main():
         "ECalTpadGravNet": ecal_tpad_gravnet_view,
         "ECalTransformer": ecal_transformer_view,
         "ECalTpadTransformer": ecal_tpad_transformer_view,
+        "ECalPreLNTransformer": ecal_transformer_view,
+        "ECalTpadPreLNTransformer": ecal_tpad_transformer_view,
     }[args.model](events[0])
     input_dim = int(prototype_view["x"].shape[1])
     resume_checkpoint = None
     gravnet_normalization = "batchnorm"
+    transformer_normalization = (
+        "pre_layernorm" if "PreLNTransformer" in args.model else "post_layernorm"
+    )
     if args.resume is not None:
         resume_checkpoint = read_checkpoint(args.resume, device)
         if resume_checkpoint.get("splits") is not None and resume_checkpoint["splits"] != splits:
@@ -906,13 +953,36 @@ def main():
                 "Resuming GravNet checkpoint with normalization=%s.",
                 gravnet_normalization,
             )
+        else:
+            checkpoint_model_kwargs = resume_checkpoint.get("model_kwargs") or {}
+            transformer_normalization = checkpoint_model_kwargs.get(
+                "normalization",
+                transformer_normalization,
+            )
+            logger.info(
+                "Resuming Transformer checkpoint with normalization=%s.",
+                transformer_normalization,
+            )
 
-    model, view_fn = model_and_view(args, input_dim, gravnet_normalization)
+    model, view_fn = model_and_view(
+        args,
+        input_dim,
+        gravnet_normalization=gravnet_normalization,
+        transformer_normalization=transformer_normalization,
+    )
     model = model.to(device)
-    model_kwargs = model_kwargs_from_args(args, input_dim, gravnet_normalization)
+    model_kwargs = model_kwargs_from_args(
+        args,
+        input_dim,
+        gravnet_normalization=gravnet_normalization,
+        transformer_normalization=transformer_normalization,
+    )
     if "GravNet" in args.model:
         args.gravnet_normalization = gravnet_normalization
         logger.info("GravNet block normalization: %s", gravnet_normalization)
+    else:
+        args.transformer_normalization = transformer_normalization
+        logger.info("Transformer normalization: %s", transformer_normalization)
     logger.info("Input feature dimension: %s", input_dim)
     training_events, training_view_fn, view_cache_info = prepare_training_views(
         events,
