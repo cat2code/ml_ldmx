@@ -6,7 +6,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import SymLogNorm
+from matplotlib.colors import LogNorm
 import numpy as np
 
 
@@ -30,14 +30,13 @@ plt.rcParams.update(
 
 
 def _count_norm(max_count):
-    """Show empty bins at the colormap floor while retaining log-like count scaling."""
-    return SymLogNorm(
-        linthresh=1.0,
-        linscale=0.5,
-        vmin=0.0,
-        vmax=max(1.0, float(max_count)),
-        base=10,
-    )
+    """Scale populated count bins logarithmically from one occurrence."""
+    return LogNorm(vmin=1.0, vmax=max(1.0, float(max_count)))
+
+
+def _populated_counts(counts):
+    """Mask empty histogram bins so the axes background remains white."""
+    return np.ma.masked_less(np.asarray(counts, dtype=float), 1.0)
 
 
 def _draw_mean_errorbars(ax, x, mean, low, high, label="event mean ± 95% CI"):
@@ -444,7 +443,7 @@ def plot_layer_accuracy_distribution(
     mesh = ax.pcolormesh(
         x_edges,
         y_edges,
-        counts.T,
+        _populated_counts(counts.T),
         cmap="viridis",
         norm=_count_norm(counts.max()),
         shading="flat",
@@ -567,7 +566,7 @@ def _draw_density_profile(
     mesh = ax.pcolormesh(
         x_edges,
         y_edges,
-        counts.T,
+        _populated_counts(counts.T),
         cmap="viridis",
         norm=_count_norm(
             float(counts.max()) if count_vmax is None else float(count_vmax)

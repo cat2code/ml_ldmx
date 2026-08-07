@@ -319,6 +319,64 @@ def _aggregate_truth_margin_profile(records):
     }
 
 
+def plot_global_label_swap_recovery(records, output_path, subtitle=None):
+    """Plot ordinary versus permutation-invariant accuracy as one large panel."""
+    pairs = []
+    for record in records:
+        ordinary = record.get("accuracy")
+        invariant = record.get("permutation_invariant_accuracy")
+        if ordinary is None or invariant is None:
+            continue
+        ordinary = float(ordinary)
+        invariant = float(invariant)
+        if np.isfinite(ordinary) and np.isfinite(invariant):
+            pairs.append((ordinary, invariant))
+    if not pairs:
+        return False
+
+    ordinary, invariant = np.asarray(pairs, dtype=float).T
+    y_lower = max(
+        0.0,
+        np.floor((float(invariant.min()) + 1e-12) / 0.05) * 0.05,
+    )
+
+    fig, ax = plt.subplots(figsize=(8.2, 7.2))
+    ax.scatter(
+        ordinary,
+        invariant,
+        s=30,
+        alpha=0.42,
+        color="#2563eb",
+        edgecolors="none",
+        rasterized=True,
+    )
+    ax.plot(
+        [0.0, 1.0],
+        [0.0, 1.0],
+        linestyle="--",
+        color="#4b5563",
+        linewidth=1.8,
+        label="no improvement",
+    )
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(y_lower, 1.01)
+    ax.set_xlabel("ordinary event hit accuracy", fontsize=17)
+    ax.set_ylabel("permutation-invariant event hit accuracy", fontsize=17)
+    title = "Can a global label swap recover the event?"
+    if subtitle:
+        title += f"\n{subtitle}"
+    ax.set_title(title, fontsize=20, pad=14)
+    ax.tick_params(axis="both", labelsize=14)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="lower right", fontsize=14)
+
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return True
+
+
 def plot_assignment_ceiling_diagnostics(records, output_path, title):
     """Plot label-binding, truth-ambiguity, and TPad-context ceiling checks."""
     if not records:

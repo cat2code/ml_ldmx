@@ -12,6 +12,7 @@ from ml_ldmx.eval.permutation_aligned import (
     energy_weighted_shower_geometry,
     global_layer_z,
 )
+from ml_ldmx.viz.permutation_aligned import _count_norm, _populated_counts
 
 
 def _prediction(true_class, predicted_class, energy=None):
@@ -47,6 +48,21 @@ def _prediction(true_class, predicted_class, energy=None):
             "electron_count": torch.tensor(num_classes),
         },
     }
+
+
+class RectangularHistogramDisplayTest(unittest.TestCase):
+    def test_empty_bins_are_masked_and_count_scale_starts_at_one(self):
+        counts = np.asarray([[0.0, 1.0], [3.0, 0.0]])
+
+        populated = _populated_counts(counts)
+        norm = _count_norm(counts.max())
+
+        np.testing.assert_array_equal(
+            np.ma.getmaskarray(populated),
+            np.asarray([[True, False], [False, True]]),
+        )
+        self.assertEqual(norm.vmin, 1.0)
+        self.assertEqual(norm.vmax, 3.0)
 
 
 class PermutationAlignedAnalysisTest(unittest.TestCase):

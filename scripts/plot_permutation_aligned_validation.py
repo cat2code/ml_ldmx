@@ -683,9 +683,9 @@ standard convention and pool hits before row normalization.
 14. `14_confidence_and_accuracy_by_ecal_layer` compares depth-dependent
     confidence with depth-dependent accuracy.
 
-Every rectangular density plot colors zero-count bins at the lower end of the
-count scale. White points and vertical bars show equal-population event-bin
-means with 95% event-bootstrap confidence intervals.
+Every rectangular density plot leaves zero-count bins white. The logarithmic
+color scale begins at one observation. White points and vertical bars show
+equal-population event-bin means with 95% event-bootstrap confidence intervals.
 
 Each plot is saved as a PNG for quick review and as a PDF for later use in
 Overleaf. The `data` directory contains the plot tables and a compact aligned

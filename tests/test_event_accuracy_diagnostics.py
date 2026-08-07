@@ -9,6 +9,7 @@ import torch.nn as nn
 from ml_ldmx.eval.event_diagnostics import (
     detector_context_summary,
     optimal_label_permutation_summary,
+    origin_centroid_axis_gap_summary,
     select_representative_events,
     truth_fraction_margin_summary,
 )
@@ -24,6 +25,31 @@ from ml_ldmx.viz.training import (
 class IdentityLogitModel(nn.Module):
     def forward(self, x):
         return x
+
+
+class OriginCentroidAxisGapTest(unittest.TestCase):
+    def test_axis_gaps_track_the_y_closest_pair(self):
+        positions = torch.tensor(
+            [
+                [0.0, 0.0],
+                [3.0, 4.0],
+                [10.0, 1.0],
+            ]
+        )
+        labels = torch.tensor([1, 2, 3])
+
+        summary = origin_centroid_axis_gap_summary(positions, labels)
+
+        self.assertAlmostEqual(summary["min_origin_centroid_gap_x"], 3.0)
+        self.assertAlmostEqual(summary["min_origin_centroid_gap_y"], 1.0)
+        self.assertAlmostEqual(summary["x_gap_for_y_closest_origin_pair"], 10.0)
+        self.assertAlmostEqual(
+            summary["xy_distance_for_y_closest_origin_pair"],
+            101.0**0.5,
+        )
+        self.assertEqual(summary["y_closest_origin_pair"], [1, 3])
+        self.assertAlmostEqual(summary["y_gap_for_x_closest_origin_pair"], 4.0)
+        self.assertEqual(summary["x_closest_origin_pair"], [1, 2])
 
 
 def _view(logits, target, event_idx, pos=None, energy=None, fractions=None, electron_count=None):

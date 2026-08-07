@@ -371,6 +371,57 @@ def _centroids_by_label(pos, labels, dims):
     return torch.stack(centroids, dim=0), present_labels
 
 
+def origin_centroid_axis_gap_summary(pos_xy, labels):
+    """Return axis-specific gaps between hard-origin ECal centroids.
+
+    The y-gap uses the same unweighted hard-origin centroids that define the
+    canonical-y target ordering. For events with more than two origins, the
+    companion x-gap and transverse distance refer to the pair with the
+    smallest y-gap.
+    """
+    centroids, present_labels = _centroids_by_label(pos_xy, labels, dims=[0, 1])
+    empty = {
+        "min_origin_centroid_gap_x": None,
+        "min_origin_centroid_gap_y": None,
+        "x_gap_for_y_closest_origin_pair": None,
+        "xy_distance_for_y_closest_origin_pair": None,
+        "y_closest_origin_pair": None,
+        "y_gap_for_x_closest_origin_pair": None,
+        "x_closest_origin_pair": None,
+    }
+    if centroids is None or centroids.shape[0] < 2:
+        return empty
+
+    pair_indices = torch.triu_indices(
+        centroids.shape[0],
+        centroids.shape[0],
+        offset=1,
+    )
+    deltas = torch.abs(
+        centroids[pair_indices[0]].to(dtype=torch.float64)
+        - centroids[pair_indices[1]].to(dtype=torch.float64)
+    )
+    distances = torch.linalg.vector_norm(deltas, dim=1)
+    y_pair_idx = int(torch.argmin(deltas[:, 1]).item())
+    x_pair_idx = int(torch.argmin(deltas[:, 0]).item())
+
+    def pair_labels(pair_idx):
+        return [
+            int(present_labels[int(pair_indices[0, pair_idx].item())]),
+            int(present_labels[int(pair_indices[1, pair_idx].item())]),
+        ]
+
+    return {
+        "min_origin_centroid_gap_x": float(deltas[x_pair_idx, 0].item()),
+        "min_origin_centroid_gap_y": float(deltas[y_pair_idx, 1].item()),
+        "x_gap_for_y_closest_origin_pair": float(deltas[y_pair_idx, 0].item()),
+        "xy_distance_for_y_closest_origin_pair": float(distances[y_pair_idx].item()),
+        "y_closest_origin_pair": pair_labels(y_pair_idx),
+        "y_gap_for_x_closest_origin_pair": float(deltas[x_pair_idx, 1].item()),
+        "x_closest_origin_pair": pair_labels(x_pair_idx),
+    }
+
+
 def _centroid_distance_stats(centroids, radius):
     if centroids is None or centroids.shape[0] < 2:
         return None, None, None
@@ -645,6 +696,7 @@ def geometry_metric_summary(
     summary.update(_named_shower_geometry(contributor_geometry, "contributor"))
     summary.update(_named_shower_geometry(dominant_geometry, "dominant"))
     _default_geometry_aliases(summary, contributor_geometry)
+    summary.update(origin_centroid_axis_gap_summary(xy, labels))
     summary.update(_hit_centroid_margin_summary(xy, labels, weights=energy_weights))
 
     if num_hits:

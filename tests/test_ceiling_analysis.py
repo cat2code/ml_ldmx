@@ -14,10 +14,29 @@ from analyze_hit_classifier_ceiling import (
     remove_tpad_tokens,
     summarize_paired_tpad_ablation,
 )
-from ml_ldmx.viz.training import plot_tpad_ablation_comparison
+from ml_ldmx.viz.training import (
+    plot_global_label_swap_recovery,
+    plot_tpad_ablation_comparison,
+)
 
 
 class CeilingAnalysisTest(unittest.TestCase):
+    def test_global_label_swap_plot_writes_file(self):
+        records = [
+            {"accuracy": 0.25, "permutation_invariant_accuracy": 0.75},
+            {"accuracy": 0.80, "permutation_invariant_accuracy": 0.80},
+        ]
+        with TemporaryDirectory() as temporary_dir:
+            output_path = Path(temporary_dir) / "global_swap.png"
+            plotted = plot_global_label_swap_recovery(
+                records,
+                output_path,
+                subtitle="test sample",
+            )
+
+            self.assertTrue(plotted)
+            self.assertGreater(output_path.stat().st_size, 0)
+
     def test_remove_tpad_tokens_preserves_hit_targets(self):
         view = {
             "x": torch.arange(24, dtype=torch.float32).reshape(3, 8),
